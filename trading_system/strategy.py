@@ -153,6 +153,9 @@ def rank_by_momentum(
     """
     指定日時点でモメンタム上位N銘柄を返す。
 
+    モメンタムデータが不足している初期期間は、短期リターン（20日）を
+    フォールバックスコアとして使用し、候補銘柄ゼロを防ぐ。
+
     Args:
         data: {ticker: DataFrame} の辞書（要 add_indicators 済み）
         date: 評価日
@@ -162,6 +165,7 @@ def rank_by_momentum(
         モメンタム上位N銘柄のティッカーリスト（降順）
     """
     momentum_scores: Dict[str, float] = {}
+    fallback_scores: Dict[str, float] = {}
 
     for ticker, df in data.items():
         if date not in df.index:
@@ -169,9 +173,21 @@ def rank_by_momentum(
         row = df.loc[date]
         mom = row.get("momentum", np.nan)
         if not np.isnan(mom):
-            momentum_scores[ticker] = mom
+            momentum_scores[ticker] = float(mom)
+        else:
+            # フォールバック: 20日リターンで代替
+            idx = df.index.get_loc(date)
+            if idx >= 20:
+                ret20 = (df["close"].iloc[idx] / df["close"].iloc[idx - 20] - 1)
+                if not np.isnan(ret20):
+                    fallback_scores[ticker] = float(ret20)
 
-    sorted_tickers = sorted(momentum_scores, key=momentum_scores.get, reverse=True)
+    if momentum_scores:
+        sorted_tickers = sorted(momentum_scores, key=momentum_scores.get, reverse=True)
+    else:
+        # 全銘柄でモメンタムが計算できない場合は短期リターンで代替
+        sorted_tickers = sorted(fallback_scores, key=fallback_scores.get, reverse=True)
+
     return sorted_tickers[:top_n]
 
 
@@ -181,14 +197,21 @@ def generate_buy_signal(
     params: Optional[Dict] = None,
 ) -> Optional[Signal]:
     """
-    買いシグナルを生成する。
+    買いシグナルをスコアリング方式で生成する。
 
-    条件（AND）:
-    1. 価格 > 200日EMA（上昇トレンド確認）
-    2. EMAゴールデンクロス（9日EMA が 26日EMAを上抜け）
-    3. RSI が 40〜70（買われすぎでも売られすぎでもない）
-    4. MACDヒストグラム > 0（上昇モメンタム）
-    5. ボリューム比率 > 1.2（出来高確認）
+    必須条件（1つでも欠けると不可）:
+      - EMAゴールデンクロス（9日EMAが26日EMAを上抜け）
+      - RSI が rsi_lower〜rsi_upper の範囲内
+
+    加点条件（各1点、min_score点以上で買いシグナル）:
+      1. 価格 > ema_trend 日EMA（中期上昇トレンド）
+      2. MACDヒストグラム > 0（モメンタム上昇中）
+      3. EMAfast が EMAslowを明確に上回っている（乖離率 > 0.3%）
+      4. ボリューム比率 >= volume_multiplier（出来高増加）
+      5. RSI が 45〜65 の理想ゾーン（過熱でも弱くもない）
+
+    この方式により、弱気相場・中立相場でも取引機会を確保しつつ
+    ノイズシグナルを除外する。
     """
     if params is None:
         params = STRATEGY_PARAMS
@@ -203,59 +226,77 @@ def generate_buy_signal(
     row = df.loc[date]
     prev_row = df.iloc[idx - 1]
 
-    # 各条件チェック
-    conditions = {}
+    rsi_val = float(row["rsi"]) if not np.isnan(row["rsi"]) else np.nan
 
-    # 1. トレンドフィルタ
-    conditions["trend_up"] = row["close"] > row["ema_trend"]
-
-    # 2. EMAゴールデンクロス
-    conditions["golden_cross"] = (
+    # ── 必須条件（どちらか欠けたら即座にNone）──
+    # 必須1: EMAゴールデンクロス
+    golden_cross = (
         row["ema_fast"] > row["ema_slow"] and
         prev_row["ema_fast"] <= prev_row["ema_slow"]
     )
+    if not golden_cross:
+        return None
 
-    # 3. RSIフィルタ
-    rsi_val = row["rsi"]
-    conditions["rsi_ok"] = (
-        not np.isnan(rsi_val) and
-        params["rsi_lower"] <= rsi_val <= params["rsi_upper"]
+    # 必須2: RSI が範囲内
+    if np.isnan(rsi_val) or not (params["rsi_lower"] <= rsi_val <= params["rsi_upper"]):
+        return None
+
+    # ── 加点条件（スコアリング）──
+    score = 0
+    score_details = []
+
+    # 加点1: 中期トレンド上向き
+    if row["close"] > row["ema_trend"]:
+        score += 1
+        score_details.append(f"トレンド↑(>{params['ema_trend']}EMA)")
+
+    # 加点2: MACDヒストグラム正
+    if not np.isnan(row["macd_hist"]) and row["macd_hist"] > 0:
+        score += 1
+        score_details.append("MACD↑")
+
+    # 加点3: EMAの乖離率が明確（0.3%以上）
+    if row["ema_slow"] > 0:
+        ema_spread = (row["ema_fast"] - row["ema_slow"]) / row["ema_slow"]
+        if ema_spread > 0.003:
+            score += 1
+            score_details.append(f"EMA乖離{ema_spread*100:.1f}%")
+
+    # 加点4: ボリューム増加
+    vol_ratio = float(row.get("volume_ratio", np.nan)) if not np.isnan(row.get("volume_ratio", np.nan)) else np.nan
+    if not np.isnan(vol_ratio) and vol_ratio >= params["volume_multiplier"]:
+        score += 1
+        score_details.append(f"出来高{vol_ratio:.1f}x")
+
+    # 加点5: RSI理想ゾーン（45-65）
+    if 45 <= rsi_val <= 65:
+        score += 1
+        score_details.append(f"RSI理想({rsi_val:.0f})")
+
+    min_score = params.get("min_score", 3)
+    if score < min_score:
+        return None
+
+    strength = _calc_signal_strength(row, params)
+    reason_str = f"GC+RSI{rsi_val:.0f} [{'/'.join(score_details)}] score={score}/5"
+
+    return Signal(
+        ticker="",
+        date=date,
+        action="BUY",
+        price=row["close"],
+        reason=reason_str,
+        strength=strength,
+        indicators={
+            "rsi": rsi_val,
+            "macd_hist": float(row["macd_hist"]) if not np.isnan(row["macd_hist"]) else 0,
+            "volume_ratio": vol_ratio,
+            "ema_fast": float(row["ema_fast"]),
+            "ema_slow": float(row["ema_slow"]),
+            "ema_trend": float(row["ema_trend"]),
+            "signal_score": score,
+        },
     )
-
-    # 4. MACDポジティブ
-    conditions["macd_positive"] = row["macd_hist"] > 0
-
-    # 5. ボリューム確認（データがない場合はスキップ）
-    vol_ratio = row.get("volume_ratio", np.nan)
-    conditions["volume_ok"] = (
-        np.isnan(vol_ratio) or
-        vol_ratio >= params["volume_multiplier"]
-    )
-
-    all_ok = all(conditions.values())
-
-    if all_ok:
-        # シグナル強度をRSI・MACD・ボリュームから計算
-        strength = _calc_signal_strength(row, params)
-
-        return Signal(
-            ticker="",  # 呼び出し元で設定
-            date=date,
-            action="BUY",
-            price=row["close"],
-            reason=f"ゴールデンクロス: EMA{params['ema_fast']}>EMA{params['ema_slow']}, RSI={rsi_val:.1f}",
-            strength=strength,
-            indicators={
-                "rsi": rsi_val,
-                "macd_hist": row["macd_hist"],
-                "volume_ratio": vol_ratio,
-                "ema_fast": row["ema_fast"],
-                "ema_slow": row["ema_slow"],
-                "ema_trend": row["ema_trend"],
-            },
-        )
-
-    return None
 
 
 def generate_sell_signal(
@@ -305,13 +346,19 @@ def generate_sell_signal(
     take_profit_price = entry_price * (1 + TAKE_PROFIT_PCT)
     take_profit_hit = current_price >= take_profit_price
 
-    # 4. トレーリングストップ
+    # 4. トレーリングストップ（含み益が entry_price × 3% 以上の場合のみ発動）
+    #    → 含み損中のトレーリングストップは損切りラインに任せる
     trailing_stop_price = highest_price * (1 - TRAILING_STOP_PCT)
-    trailing_stop_hit = current_price <= trailing_stop_price and current_price > entry_price
+    has_meaningful_gain = highest_price >= entry_price * 1.03
+    trailing_stop_hit = (
+        current_price <= trailing_stop_price and
+        has_meaningful_gain
+    )
 
-    # 5. 過熱RSI
+    # 5. 過熱RSI（売りシグナルのRSI閾値はパラメータから動的に取得）
     rsi_val = row["rsi"]
-    rsi_overbought = not np.isnan(rsi_val) and rsi_val > 75
+    rsi_threshold = params.get("rsi_upper", 75) + 5   # 買いRSI上限+5で売り
+    rsi_overbought = not np.isnan(rsi_val) and rsi_val > rsi_threshold
 
     if dead_cross:
         reason = f"デッドクロス: EMA{params['ema_fast']}<EMA{params['ema_slow']}"

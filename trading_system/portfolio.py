@@ -106,9 +106,10 @@ class Portfolio:
             logger.debug(f"[{ticker}] ポジション上限({self.max_positions})到達。スキップ。")
             return False
 
-        # ポジションサイズ計算
-        budget = self.initial_capital * self.position_size_pct
-        budget = min(budget, self.cash * 0.95)  # 現金の95%まで使用可
+        # ポジションサイズ計算（現在の現金ベースで動的に算出）
+        # initial_capital 固定ではなく、現時点の cash を基準にする
+        budget = self.cash * self.position_size_pct
+        budget = min(budget, self.cash * 0.95)  # 現金の95%を上限
 
         if budget < price:
             logger.debug(f"[{ticker}] 資金不足。スキップ。")

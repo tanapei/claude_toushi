@@ -70,6 +70,7 @@ const PARAM_LABELS = {
   top_n_momentum:    'モメンタム上位N',
   volume_ma_period:  'ボリュームMA期間',
   volume_multiplier: 'ボリューム倍率',
+  min_score:         '買いスコア閾値(1-5)',
 };
 
 function buildParamGrid(params) {

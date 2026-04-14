@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: claude-toushi
+    runtime: python
+    region: singapore         # 日本から最も近いRenderリージョン
+    branch: claude/stock-trading-system-ZY8oD
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 0 --keep-alive 65 web_app:app
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false            # Renderダッシュボードで手動設定（機密情報）
+      - key: PYTHON_VERSION
+        value: 3.11.0
+    # 無料プランのディスクは再起動で消えるため、/tmp 以下に保存するよう設定
+    # 永続化が必要な場合は Render の Disk ($0.25/GB) を追加してください

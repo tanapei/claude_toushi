@@ -57,20 +57,34 @@ body {
 .logo-icon { font-size: 22px; }
 .logo-text  { font-size: 16px; font-weight: 700; letter-spacing: .03em; }
 
-.tabs { display: flex; gap: 4px; }
+.tabs { display: flex; gap: 4px; flex-wrap: wrap; }
 .tab {
-  padding: 6px 18px;
+  padding: 6px 14px;
   border: none;
   background: transparent;
   color: var(--text-muted);
   border-radius: 6px;
   cursor: pointer;
-  font-size: 13.5px;
+  font-size: 13px;
   font-weight: 500;
   transition: color .15s, background .15s;
+  white-space: nowrap;
 }
 .tab:hover  { color: var(--text); background: var(--surface2); }
 .tab.active { color: var(--primary); background: rgba(79,142,247,.12); }
+
+/* スマホ用ヘッダー */
+@media (max-width: 640px) {
+  .header-inner { flex-direction: column; height: auto; padding: 10px 16px; gap: 8px; }
+  .logo-text { font-size: 14px; }
+  .tab { padding: 5px 10px; font-size: 12px; }
+  .main { padding: 12px; }
+  .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+  .form-row { grid-template-columns: 1fr; }
+  .run-layout { grid-template-columns: 1fr; }
+  .analysis-grid { grid-template-columns: 1fr; }
+  .chart-wrap { height: 220px; }
+}
 
 /* =============================================
    メインコンテンツ

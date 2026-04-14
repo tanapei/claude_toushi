@@ -29,7 +29,21 @@ from trading_system.trade_logger import TradeLogger
 app = Flask(__name__)
 CORS(app)
 
-logging.basicConfig(level=logging.INFO)
+# クラウド環境ではストリームのみ、ローカルではファイルログも出力
+_log_handlers = [logging.StreamHandler()]
+try:
+    from trading_system.config import LOGS_DIR
+    _log_handlers.append(
+        logging.FileHandler(LOGS_DIR / "trading.log", encoding="utf-8")
+    )
+except Exception:
+    pass
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=_log_handlers,
+)
 logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────

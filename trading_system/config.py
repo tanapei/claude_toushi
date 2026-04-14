@@ -7,17 +7,36 @@ from pathlib import Path
 
 # =============================================
 # プロジェクトパス設定
+# クラウド環境（Render等）では STORAGE_DIR 環境変数で /tmp を指定可能
 # =============================================
 BASE_DIR = Path(__file__).parent.parent
-DATA_DIR = BASE_DIR / "data"
-LOGS_DIR = BASE_DIR / "logs"
-RESULTS_DIR = BASE_DIR / "results"
+
+# クラウド環境では書き込み可能な /tmp を使う
+# STORAGE_DIR 環境変数が設定されていればそちらを優先
+_storage = os.environ.get("STORAGE_DIR", "")
+if _storage:
+    STORAGE_ROOT = Path(_storage)
+else:
+    # Render等: /tmp は常に書き込み可能
+    # ローカル: プロジェクトディレクトリ内を使う
+    try:
+        test_path = BASE_DIR / "data" / ".write_test"
+        test_path.parent.mkdir(exist_ok=True)
+        test_path.touch()
+        test_path.unlink()
+        STORAGE_ROOT = BASE_DIR
+    except (PermissionError, OSError):
+        STORAGE_ROOT = Path("/tmp/claude_toushi")
+
+DATA_DIR    = STORAGE_ROOT / "data"
+LOGS_DIR    = STORAGE_ROOT / "logs"
+RESULTS_DIR = STORAGE_ROOT / "results"
 
 # ディレクトリ作成
 for d in [DATA_DIR, LOGS_DIR, RESULTS_DIR]:
-    d.mkdir(exist_ok=True)
+    d.mkdir(parents=True, exist_ok=True)
 
-DB_PATH = DATA_DIR / "trades.db"
+DB_PATH       = DATA_DIR / "trades.db"
 ANALYSIS_PATH = RESULTS_DIR / "analysis_history.json"
 
 # =============================================

@@ -578,3 +578,203 @@ function escHtml(s) {
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// ─── 最適化タブ ──────────────────────────────
+let optSseSource = null;
+let bestOptParams = null;
+
+// 最適化タブが開かれたとき探索グリッドを表示
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelector('[data-tab="optimize"]').addEventListener('click', () => {
+    loadOptDefaultGrid();
+  });
+});
+
+async function loadOptDefaultGrid() {
+  const grid = document.getElementById('opt-param-grid');
+  if (grid.children.length > 0) return; // 既にロード済み
+  try {
+    const res = await fetch('/api/optimize/default_grid');
+    const defaultGrid = await res.json();
+    Object.entries(defaultGrid).forEach(([key, vals]) => {
+      const div = document.createElement('div');
+      div.className = 'param-item';
+      div.innerHTML = `
+        <label>${PARAM_LABELS[key] || key}</label>
+        <input type="text" id="og_${key}" data-key="${key}"
+               value="${vals.join(', ')}" style="font-size:12px" />
+        <div style="font-size:10px;color:var(--text-muted)">カンマ区切りで複数指定</div>
+      `;
+      grid.appendChild(div);
+    });
+  } catch(e) { console.warn('グリッド読み込みエラー:', e); }
+}
+
+function readOptGrid() {
+  const grid = {};
+  document.querySelectorAll('#opt-param-grid input').forEach(inp => {
+    const key = inp.dataset.key;
+    if (!key) return;
+    const vals = inp.value.split(',').map(v => {
+      const n = parseFloat(v.trim());
+      return isNaN(n) ? null : n;
+    }).filter(v => v !== null);
+    if (vals.length) grid[key] = vals;
+  });
+  return Object.keys(grid).length > 0 ? grid : null;
+}
+
+async function startOptimize() {
+  const btn = document.getElementById('opt-run-btn');
+  btn.disabled = true;
+  document.getElementById('opt-btn-text').textContent = '⏳ 最適化中...';
+  document.getElementById('opt-results-section').classList.add('hidden');
+  optAppendLog('最適化を開始します...', 'log-info');
+  setOptProgress(0, '接続中...');
+
+  const payload = {
+    start_date:       document.getElementById('opt-start').value,
+    end_date:         document.getElementById('opt-end').value,
+    max_combinations: parseInt(document.getElementById('opt-max-combo').value, 10),
+    walk_forward:     document.getElementById('opt-walkforward').checked,
+    param_grid:       readOptGrid(),
+  };
+
+  try {
+    const res = await fetch('/api/optimize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      optAppendLog(`エラー: ${err.error}`, 'log-error');
+      unlockOptBtn(); return;
+    }
+    listenOptSSE();
+  } catch(e) {
+    optAppendLog(`接続エラー: ${e}`, 'log-error');
+    unlockOptBtn();
+  }
+}
+
+function listenOptSSE() {
+  if (optSseSource) { optSseSource.close(); }
+  optSseSource = new EventSource('/api/optimize/events');
+  optSseSource.onmessage = async e => {
+    if (!e.data.trim() || e.data === '{}') return;
+    const ev = JSON.parse(e.data);
+    if (ev.progress >= 0) setOptProgress(ev.progress, ev.message || '');
+    if (ev.message)       optAppendLog(ev.message, ev.error ? 'log-error' : 'log-info');
+    if (ev.done) {
+      optSseSource.close();
+      await onOptComplete();
+    }
+  };
+  optSseSource.onerror = async () => {
+    optSseSource.close();
+    // ポーリングフォールバック
+    while (true) {
+      await sleep(2000);
+      const st = await (await fetch('/api/optimize/status')).json();
+      setOptProgress(st.progress, st.message);
+      if (!st.is_running) { await onOptComplete(); break; }
+    }
+  };
+}
+
+async function onOptComplete() {
+  unlockOptBtn();
+  setOptProgress(100, '完了');
+  try {
+    const result = await (await fetch('/api/optimize/result')).json();
+    if (result.error) { optAppendLog(`エラー: ${result.error}`, 'log-error'); return; }
+    optAppendLog(`✓ 完了: ${result.total_tested}パターン評価`, 'log-ok');
+    renderOptResults(result);
+  } catch(e) { optAppendLog(`結果取得失敗: ${e}`, 'log-error'); }
+}
+
+function renderOptResults(result) {
+  bestOptParams = result.best_params;
+  document.getElementById('opt-results-section').classList.remove('hidden');
+
+  // 最良パラメータ速報
+  const bt = result.best_train || {};
+  const be = result.best_test  || {};
+  const isWF = result.walk_forward;
+  document.getElementById('opt-best-summary').innerHTML = `
+    <div class="rp-title">🥇 最良パラメータ — スコア: ${result.best_score}</div>
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">
+      EMA ${result.best_params?.ema_fast}/${result.best_params?.ema_slow} &nbsp;|&nbsp;
+      トレンドEMA ${result.best_params?.ema_trend} &nbsp;|&nbsp;
+      RSI ${result.best_params?.rsi_lower}-${result.best_params?.rsi_upper} &nbsp;|&nbsp;
+      ADX≥${result.best_params?.adx_threshold} &nbsp;|&nbsp;
+      最小スコア ${result.best_params?.min_score}
+    </div>
+    <div class="rp-grid">
+      <div><span class="rp-label">学習 Return</span>
+           <span class="rp-val ${bt.total_return_pct>=0?'positive':'negative'}">${fmt_pct(bt.total_return_pct??0)}</span></div>
+      <div><span class="rp-label">学習 勝率</span>
+           <span class="rp-val">${(bt.win_rate??0).toFixed(1)}%</span></div>
+      ${isWF ? `
+      <div><span class="rp-label">検証 Return</span>
+           <span class="rp-val ${(be.total_return_pct??0)>=0?'positive':'negative'}">${fmt_pct(be.total_return_pct??0)}</span></div>
+      <div><span class="rp-label">検証 勝率</span>
+           <span class="rp-val">${(be.win_rate??0).toFixed(1)}%</span></div>
+      ` : ''}
+    </div>
+  `;
+
+  // Top10テーブル
+  const tbody = document.getElementById('opt-results-tbody');
+  tbody.innerHTML = (result.top10 || []).map((r, i) => {
+    const trCls = (r.train_return??0) >= 0 ? 'pnl-positive' : 'pnl-negative';
+    const teCls = (r.test_return??0)  >= 0 ? 'pnl-positive' : 'pnl-negative';
+    return `<tr ${i===0?'style="background:rgba(79,142,247,.08)"':''}>
+      <td>${i+1}</td>
+      <td><strong>${r.score}</strong></td>
+      <td>${r.ema}</td>
+      <td>${r.ema_trend}</td>
+      <td>${r.rsi_range}</td>
+      <td>${r.adx_thresh}</td>
+      <td>${r.min_score}</td>
+      <td class="${trCls}">${fmt_pct(r.train_return??0)}</td>
+      <td>${(r.train_winrate??0).toFixed(1)}%</td>
+      <td>${(r.train_sharpe??0).toFixed(2)}</td>
+      <td class="${teCls}">${r.test_return != null ? fmt_pct(r.test_return) : '—'}</td>
+      <td>${r.test_winrate != null ? (r.test_winrate).toFixed(1)+'%' : '—'}</td>
+    </tr>`;
+  }).join('');
+}
+
+function applyBestParams() {
+  if (!bestOptParams) return;
+  // バックテスト実行タブのパラメータフォームに反映
+  switchTab('run');
+  setTimeout(() => {
+    Object.entries(bestOptParams).forEach(([key, val]) => {
+      const inp = document.getElementById(`p_${key}`);
+      if (inp) inp.value = val;
+    });
+    alert('最良パラメータをバックテストフォームに適用しました。\n「バックテスト開始」で実際に検証してください。');
+  }, 200);
+}
+
+function setOptProgress(pct, msg) {
+  document.getElementById('opt-progress-fill').style.width = `${Math.max(0, pct)}%`;
+  document.getElementById('opt-progress-text').textContent = msg || '';
+}
+
+function optAppendLog(msg, cls = 'log-entry') {
+  const box  = document.getElementById('opt-log-box');
+  const line = document.createElement('div');
+  line.className = `log-entry ${cls}`;
+  line.textContent = `[${new Date().toLocaleTimeString('ja-JP')}] ${msg}`;
+  box.appendChild(line);
+  box.scrollTop = box.scrollHeight;
+}
+
+function unlockOptBtn() {
+  const btn = document.getElementById('opt-run-btn');
+  if (btn) { btn.disabled = false; document.getElementById('opt-btn-text').textContent = '🔬 最適化開始'; }
+}

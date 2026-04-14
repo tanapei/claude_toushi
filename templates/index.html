@@ -22,6 +22,7 @@
       <button class="tab" data-tab="run"       role="tab">バックテスト実行</button>
       <button class="tab" data-tab="trades"    role="tab">取引履歴</button>
       <button class="tab" data-tab="analysis"  role="tab">AI 分析</button>
+      <button class="tab" data-tab="optimize"  role="tab">🔬 最適化</button>
     </nav>
   </div>
 </header>
@@ -280,6 +281,107 @@
         <summary class="card-header" style="cursor:pointer">📄 Claude フル分析テキスト</summary>
         <pre id="full-analysis-text" class="full-text"></pre>
       </details>
+    </div>
+  </section>
+
+  <!-- ─── 最適化 タブ ─── -->
+  <section class="tab-panel" id="panel-optimize">
+    <div class="section-title">パラメータ最適化</div>
+
+    <div class="card mb-20" style="border-color:rgba(247,201,72,.3)">
+      <div class="card-header">💡 最適化の仕組み</div>
+      <p style="color:var(--text-muted);font-size:13px;line-height:1.8">
+        指定した探索範囲内でパラメータの組み合わせを自動テストし、<strong>シャープ比・勝率・ドローダウン</strong>を総合した
+        スコアが最も高い設定を見つけます。<br>
+        <strong>ウォークフォワード検証</strong>を有効にすると、前半で最適化した設定を後半のデータで検証し、
+        過学習（カーブフィッティング）を防ぎます。
+      </p>
+    </div>
+
+    <div class="run-layout">
+      <!-- 左: 設定 -->
+      <div class="card">
+        <div class="card-header">最適化設定</div>
+        <div class="form-group">
+          <label for="opt-start">開始日</label>
+          <input type="date" id="opt-start" value="2022-01-01" />
+        </div>
+        <div class="form-group">
+          <label for="opt-end">終了日</label>
+          <input type="date" id="opt-end" value="2024-12-31" />
+        </div>
+        <div class="form-group">
+          <label for="opt-max-combo">最大試行数 <span style="color:var(--text-muted)">(多いほど精度↑、時間↑)</span></label>
+          <input type="number" id="opt-max-combo" value="30" min="10" max="100" />
+        </div>
+        <div class="form-group">
+          <label class="radio-label" style="font-size:14px">
+            <input type="checkbox" id="opt-walkforward" checked />
+            <span>ウォークフォワード検証を使う（推奨）</span>
+          </label>
+        </div>
+
+        <details style="margin-bottom:16px">
+          <summary style="cursor:pointer;color:var(--text-muted);font-size:13px">探索範囲をカスタマイズ ▶</summary>
+          <div id="opt-param-grid" class="param-grid" style="margin-top:12px"></div>
+        </details>
+
+        <button class="btn-primary" id="opt-run-btn" onclick="startOptimize()">
+          <span id="opt-btn-text">🔬 最適化開始</span>
+        </button>
+      </div>
+
+      <!-- 右: 進捗 -->
+      <div class="card">
+        <div class="card-header">実行ログ</div>
+        <div class="progress-wrap">
+          <div class="progress-bar-bg">
+            <div class="progress-bar-fill" id="opt-progress-fill" style="width:0%"></div>
+          </div>
+          <div class="progress-text" id="opt-progress-text">待機中</div>
+        </div>
+        <div class="log-box" id="opt-log-box">
+          <div class="log-entry log-info">「最適化開始」を押すと自動でパラメータを探索します。</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 結果テーブル -->
+    <div id="opt-results-section" class="hidden mt-20">
+      <div class="card">
+        <div class="card-header">
+          <span>最適パラメータ（Top10）</span>
+          <button class="btn-secondary" id="apply-best-btn" onclick="applyBestParams()">
+            ✅ 最良パラメータをバックテストに適用
+          </button>
+        </div>
+
+        <!-- 最良パラメータ速報 -->
+        <div id="opt-best-summary" class="result-preview" style="margin-bottom:16px"></div>
+
+        <div class="table-wrap">
+          <table id="opt-results-table">
+            <thead>
+              <tr>
+                <th>順位</th>
+                <th>スコア</th>
+                <th>EMA</th>
+                <th>トレンドEMA</th>
+                <th>RSI範囲</th>
+                <th>ADX閾値</th>
+                <th>最小スコア</th>
+                <th title="学習期間 リターン">学習 Return</th>
+                <th title="学習期間 勝率">学習 Win%</th>
+                <th title="学習期間 シャープ">学習 Sharpe</th>
+                <th title="検証期間 リターン">検証 Return</th>
+                <th title="検証期間 勝率">検証 Win%</th>
+              </tr>
+            </thead>
+            <tbody id="opt-results-tbody">
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   </section>
 

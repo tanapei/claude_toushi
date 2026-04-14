@@ -489,6 +489,132 @@ def get_cumulative_performance():
     return jsonify(trade_logger.get_cumulative_performance())
 
 
+# ─────────────────────────────────────────────
+# 最適化 API
+# ─────────────────────────────────────────────
+
+class OptimizeState:
+    def __init__(self):
+        self.is_running = False
+        self.progress = 0
+        self.message = ""
+        self.result = None
+        self.error = None
+        self.log_queue: queue.Queue = queue.Queue(maxsize=500)
+
+    def reset(self):
+        self.is_running = True
+        self.progress = 0
+        self.message = "初期化中..."
+        self.result = None
+        self.error = None
+        while not self.log_queue.empty():
+            self.log_queue.get_nowait()
+
+    def update(self, current, total, message):
+        pct = int(current / max(total, 1) * 90)
+        self.progress = pct
+        self.message = message
+        self.log_queue.put_nowait({"progress": pct, "message": message})
+
+    def finish(self, result):
+        self.is_running = False
+        self.progress = 100
+        self.result = result
+        self.log_queue.put_nowait({"progress": 100, "message": "最適化完了", "done": True})
+
+    def fail(self, error):
+        self.is_running = False
+        self.error = error
+        self.log_queue.put_nowait({"progress": -1, "message": f"エラー: {error}", "error": True, "done": True})
+
+
+opt_state = OptimizeState()
+
+
+def _opt_worker(start_date, end_date, max_combinations, use_walk_forward, param_grid):
+    from trading_system.optimize import run_optimization
+    try:
+        result = run_optimization(
+            start_date=start_date,
+            end_date=end_date,
+            max_combinations=max_combinations,
+            use_walk_forward=use_walk_forward,
+            param_grid=param_grid if param_grid else None,
+            progress_callback=opt_state.update,
+        )
+        opt_state.finish(result)
+    except Exception as e:
+        logger.exception("最適化エラー")
+        opt_state.fail(str(e))
+
+
+@app.route("/api/optimize", methods=["POST"])
+def start_optimize():
+    if opt_state.is_running:
+        return jsonify({"error": "最適化実行中"}), 409
+
+    data = request.get_json() or {}
+    start_date       = data.get("start_date", BACKTEST_START)
+    end_date         = data.get("end_date", BACKTEST_END)
+    max_combinations = int(data.get("max_combinations", 30))
+    use_wf           = bool(data.get("walk_forward", True))
+    param_grid       = data.get("param_grid", None)
+
+    opt_state.reset()
+    t = threading.Thread(
+        target=_opt_worker,
+        args=(start_date, end_date, max_combinations, use_wf, param_grid),
+        daemon=True,
+    )
+    t.start()
+    return jsonify({"status": "started"})
+
+
+@app.route("/api/optimize/status")
+def opt_status():
+    return jsonify({
+        "is_running": opt_state.is_running,
+        "progress":   opt_state.progress,
+        "message":    opt_state.message,
+        "has_result": opt_state.result is not None,
+        "error":      opt_state.error,
+    })
+
+
+@app.route("/api/optimize/events")
+def opt_sse_events():
+    def generate():
+        yield "data: {}\n\n"
+        while True:
+            try:
+                ev = opt_state.log_queue.get(timeout=30)
+                yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+                if ev.get("done"):
+                    break
+            except queue.Empty:
+                yield ": keepalive\n\n"
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.route("/api/optimize/result")
+def opt_result():
+    if opt_state.result is None:
+        return jsonify({"error": "結果なし"}), 404
+    return jsonify(opt_state.result)
+
+
+@app.route("/api/optimize/default_grid")
+def opt_default_grid():
+    from trading_system.optimize import DEFAULT_PARAM_GRID
+    return jsonify(DEFAULT_PARAM_GRID)
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     print(f"\n株式取引シミュレーション UI 起動中...")

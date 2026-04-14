@@ -88,6 +88,43 @@ class TechnicalIndicators:
         vol_ma = df["volume"].rolling(period).mean()
         return df["volume"] / vol_ma.replace(0, np.nan)
 
+    @staticmethod
+    def adx(df: pd.DataFrame, period: int = 14) -> pd.Series:
+        """
+        Average Directional Index（平均方向性指数）
+        トレンドの強さを0〜100で示す。
+        - ADX < 20: レンジ相場（ダマシ多い）
+        - ADX 20〜40: 中程度のトレンド
+        - ADX > 40: 強いトレンド（最良のエントリー環境）
+        """
+        high  = df["high"]
+        low   = df["low"]
+        close = df["close"]
+
+        # True Range
+        tr = pd.concat([
+            high - low,
+            (high - close.shift(1)).abs(),
+            (low  - close.shift(1)).abs(),
+        ], axis=1).max(axis=1)
+
+        # Directional Movement
+        up_move   = high.diff()
+        down_move = -low.diff()
+        dm_plus  = up_move.where((up_move > down_move)   & (up_move > 0),   0.0)
+        dm_minus = down_move.where((down_move > up_move) & (down_move > 0), 0.0)
+
+        # Wilder's smoothing
+        tr_s   = tr.ewm(alpha=1/period, adjust=False).mean()
+        dmp_s  = dm_plus.ewm(alpha=1/period, adjust=False).mean()
+        dmm_s  = dm_minus.ewm(alpha=1/period, adjust=False).mean()
+
+        di_plus  = 100 * dmp_s / tr_s.replace(0, np.nan)
+        di_minus = 100 * dmm_s / tr_s.replace(0, np.nan)
+        di_sum   = (di_plus + di_minus).replace(0, np.nan)
+        dx       = 100 * (di_plus - di_minus).abs() / di_sum
+        return dx.ewm(alpha=1/period, adjust=False).mean()
+
 
 def add_indicators(df: pd.DataFrame, params: Optional[Dict] = None) -> pd.DataFrame:
     """
@@ -134,6 +171,9 @@ def add_indicators(df: pd.DataFrame, params: Optional[Dict] = None) -> pd.DataFr
 
     # ATR（ボラティリティ）
     df["atr"] = ti.atr(df)
+
+    # ADX（トレンド強度）
+    df["adx"] = ti.adx(df, params.get("adx_period", 14))
 
     # EMAクロスシグナル（ゴールデンクロス=1, デッドクロス=-1, それ以外=0）
     df["ema_cross"] = 0
@@ -228,18 +268,32 @@ def generate_buy_signal(
 
     rsi_val = float(row["rsi"]) if not np.isnan(row["rsi"]) else np.nan
 
-    # ── 必須条件（どちらか欠けたら即座にNone）──
-    # 必須1: EMAゴールデンクロス
-    golden_cross = (
-        row["ema_fast"] > row["ema_slow"] and
-        prev_row["ema_fast"] <= prev_row["ema_slow"]
-    )
-    if not golden_cross:
+    # ── 必須条件（1つでも欠けたら即座にNone）──
+
+    # 必須1: EMAゴールデンクロス（当日 or 直近 confirm_days 以内に発生）
+    confirm_days = params.get("confirm_days", 3)
+    gc_found = False
+    for lookback in range(1, confirm_days + 2):
+        if idx < lookback:
+            break
+        cur  = df.iloc[idx - lookback + 1]
+        prev = df.iloc[idx - lookback]
+        if cur["ema_fast"] > cur["ema_slow"] and prev["ema_fast"] <= prev["ema_slow"]:
+            gc_found = True
+            break
+    # クロス後は EMA fast が slow を上回り続けていることも確認
+    if not gc_found or row["ema_fast"] <= row["ema_slow"]:
         return None
 
     # 必須2: RSI が範囲内
     if np.isnan(rsi_val) or not (params["rsi_lower"] <= rsi_val <= params["rsi_upper"]):
         return None
+
+    # 必須3: ADX フィルタ（レンジ相場でのダマシを排除）
+    adx_val = float(row["adx"]) if "adx" in row.index and not np.isnan(row["adx"]) else np.nan
+    adx_threshold = params.get("adx_threshold", 20)
+    if not np.isnan(adx_val) and adx_val < adx_threshold:
+        return None  # トレンドが弱すぎる → スキップ
 
     # ── 加点条件（スコアリング）──
     score = 0
@@ -305,6 +359,7 @@ def generate_sell_signal(
     entry_price: float,
     highest_price: float,
     params: Optional[Dict] = None,
+    entry_date: Optional[pd.Timestamp] = None,
 ) -> Optional[Signal]:
     """
     売りシグナルを生成する。
@@ -360,6 +415,16 @@ def generate_sell_signal(
     rsi_threshold = params.get("rsi_upper", 75) + 5   # 買いRSI上限+5で売り
     rsi_overbought = not np.isnan(rsi_val) and rsi_val > rsi_threshold
 
+    # 6. 時間ベースの強制決済（含み益ゼロのまま max_hold_days 経過）
+    max_hold = params.get("max_hold_days", 30)
+    time_exit = False
+    if entry_date is not None:
+        hold_days = (date - entry_date).days
+        pnl_pct = (current_price - entry_price) / entry_price
+        # 保有期間超過 かつ 利益が出ていない場合のみ強制決済
+        if hold_days >= max_hold and pnl_pct < 0.02:
+            time_exit = True
+
     if dead_cross:
         reason = f"デッドクロス: EMA{params['ema_fast']}<EMA{params['ema_slow']}"
     elif stop_loss_hit:
@@ -373,6 +438,9 @@ def generate_sell_signal(
         reason = f"トレーリングストップ: 高値から{pct:.1f}%下落"
     elif rsi_overbought:
         reason = f"RSI過熱: {rsi_val:.1f}"
+    elif time_exit:
+        pct = (current_price - entry_price) / entry_price * 100
+        reason = f"時間切れ決済: {hold_days}日経過 ({pct:+.1f}%)"
     else:
         return None
 

@@ -55,6 +55,7 @@ class Backtester:
         self.logger = TradeLogger()
         self.data: Dict[str, pd.DataFrame] = {}
         self.all_dates: List[pd.Timestamp] = []
+        self.nikkei_data: pd.DataFrame = pd.DataFrame()  # 市場レジームフィルタ用
 
     def run(self, save_results: bool = True, analyze: bool = True) -> Dict:
         """
@@ -117,6 +118,17 @@ class Backtester:
         if not self.data:
             return
 
+        # 日経225データを取得（市場レジームフィルタ用）
+        logger.info("日経225データを取得中...")
+        nikkei_raw = get_benchmark_data(self.start_date, self.end_date)
+        if not nikkei_raw.empty:
+            regime_period = self.strategy_params.get("market_regime_ema", 50)
+            nikkei_raw["regime_ema"] = nikkei_raw["close"].ewm(
+                span=regime_period, adjust=False
+            ).mean()
+            self.nikkei_data = nikkei_raw
+            logger.info(f"日経225: {len(self.nikkei_data)}日分取得完了")
+
         # 共通日付リストを作成
         all_dates_set = set()
         for df in self.data.values():
@@ -170,6 +182,7 @@ class Backtester:
                     entry_price=pos.entry_price,
                     highest_price=pos.highest_price,
                     params=params,
+                    entry_date=pos.entry_date,
                 )
                 if sell_signal:
                     positions_to_sell.append((ticker, sell_signal))
@@ -183,9 +196,11 @@ class Backtester:
                     indicators=signal.indicators,
                 )
 
-            # --- ② 買いシグナルチェック（モメンタム上位から） ---
-            if len(self.portfolio.positions) < self.portfolio.max_positions:
-                # モメンタム上位銘柄を候補に
+            # --- ② 市場レジームチェック（日経225が弱気なら新規買い禁止）---
+            market_bullish = self._is_market_bullish(date)
+
+            # --- ③ 買いシグナルチェック（モメンタム上位から） ---
+            if market_bullish and len(self.portfolio.positions) < self.portfolio.max_positions:
                 candidates = rank_by_momentum(self.data, date, top_n)
 
                 for ticker in candidates:
@@ -228,6 +243,30 @@ class Backtester:
             if date in df.index:
                 prices[ticker] = float(df.loc[date, "close"])
         return prices
+
+    def _is_market_bullish(self, date: pd.Timestamp) -> bool:
+        """
+        日経225が市場レジームEMAを上回っていれば True（強気相場）。
+        データがない場合は True を返してフィルタをスキップする。
+        """
+        if self.nikkei_data.empty:
+            return True
+
+        # 当日以前で最も近い日付を取得
+        available = self.nikkei_data.index[self.nikkei_data.index <= date]
+        if len(available) == 0:
+            return True
+
+        last = available[-1]
+        row = self.nikkei_data.loc[last]
+        close = row.get("close", float("nan"))
+        regime_ema = row.get("regime_ema", float("nan"))
+
+        import math
+        if math.isnan(close) or math.isnan(regime_ema):
+            return True
+
+        return float(close) > float(regime_ema)
 
     def _close_all_positions(self) -> None:
         """バックテスト終了時に残ポジションを全決済する。"""

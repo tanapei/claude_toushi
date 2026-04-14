@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Claude 株式取引シミュレーター</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+<!-- ヘッダー -->
+<header class="header">
+  <div class="header-inner">
+    <div class="logo">
+      <span class="logo-icon">📈</span>
+      <span class="logo-text">Claude 株式取引シミュレーター</span>
+    </div>
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-tab="dashboard" role="tab">ダッシュボード</button>
+      <button class="tab" data-tab="run"       role="tab">バックテスト実行</button>
+      <button class="tab" data-tab="trades"    role="tab">取引履歴</button>
+      <button class="tab" data-tab="analysis"  role="tab">AI 分析</button>
+    </nav>
+  </div>
+</header>
+
+<!-- メインコンテンツ -->
+<main class="main">
+
+  <!-- ─── ダッシュボード タブ ─── -->
+  <section class="tab-panel active" id="panel-dashboard">
+    <div class="section-title">パフォーマンス概要</div>
+
+    <!-- KPI カード -->
+    <div class="kpi-grid" id="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-label">セッション数</div>
+        <div class="kpi-value" id="kpi-sessions">—</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">平均リターン</div>
+        <div class="kpi-value" id="kpi-avg-return">—</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">最高リターン</div>
+        <div class="kpi-value positive" id="kpi-best-return">—</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">平均勝率</div>
+        <div class="kpi-value" id="kpi-win-rate">—</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">平均シャープ比</div>
+        <div class="kpi-value" id="kpi-sharpe">—</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">平均最大DD</div>
+        <div class="kpi-value negative" id="kpi-drawdown">—</div>
+      </div>
+    </div>
+
+    <!-- セッション選択 + 資産推移チャート -->
+    <div class="card mt-20">
+      <div class="card-header">
+        <span>資産推移チャート</span>
+        <select id="session-select" class="select-sm">
+          <option value="">セッションを選択...</option>
+        </select>
+      </div>
+      <div class="chart-wrap">
+        <canvas id="equity-chart"></canvas>
+      </div>
+    </div>
+
+    <!-- セッション一覧テーブル -->
+    <div class="card mt-20">
+      <div class="card-header">セッション履歴</div>
+      <div class="table-wrap">
+        <table id="sessions-table">
+          <thead>
+            <tr>
+              <th>実行ID</th>
+              <th>期間</th>
+              <th>リターン</th>
+              <th>勝率</th>
+              <th>シャープ</th>
+              <th>最大DD</th>
+              <th>取引数</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="sessions-tbody">
+            <tr><td colspan="8" class="empty">データなし — バックテストを実行してください</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── バックテスト実行 タブ ─── -->
+  <section class="tab-panel" id="panel-run">
+    <div class="section-title">バックテスト設定</div>
+
+    <div class="run-layout">
+      <!-- 左: 設定フォーム -->
+      <div class="card run-form-card">
+        <form id="run-form">
+          <!-- 基本設定 -->
+          <div class="form-group">
+            <label>実行モード</label>
+            <div class="radio-group">
+              <label class="radio-label">
+                <input type="radio" name="mode" value="single" checked />
+                <span>単発バックテスト</span>
+              </label>
+              <label class="radio-label">
+                <input type="radio" name="mode" value="iterative" />
+                <span>イテレーティブ（Claude が毎回改善）</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="start-date">開始日</label>
+              <input type="date" id="start-date" name="start_date" value="2022-01-01" />
+            </div>
+            <div class="form-group">
+              <label for="end-date">終了日</label>
+              <input type="date" id="end-date" name="end_date" value="2024-12-31" />
+            </div>
+            <div class="form-group" id="iterations-group" style="display:none">
+              <label for="iterations">反復回数</label>
+              <input type="number" id="iterations" name="iterations" value="3" min="1" max="5" />
+            </div>
+          </div>
+
+          <!-- 戦略パラメータ -->
+          <details class="param-details" open>
+            <summary>戦略パラメータ <span class="badge">カスタム可</span></summary>
+            <div class="param-grid" id="param-grid">
+              <!-- JS で動的生成 -->
+            </div>
+          </details>
+
+          <button type="submit" class="btn-primary" id="run-btn">
+            <span id="run-btn-text">▶ バックテスト開始</span>
+          </button>
+        </form>
+      </div>
+
+      <!-- 右: 進捗パネル -->
+      <div class="card progress-card">
+        <div class="card-header">実行ログ</div>
+
+        <!-- プログレスバー -->
+        <div class="progress-wrap">
+          <div class="progress-bar-bg">
+            <div class="progress-bar-fill" id="progress-fill" style="width:0%"></div>
+          </div>
+          <div class="progress-text" id="progress-text">待機中</div>
+        </div>
+
+        <!-- ライブメッセージ -->
+        <div class="log-box" id="log-box">
+          <div class="log-entry log-info">バックテストを開始すると、ここにログが表示されます。</div>
+        </div>
+
+        <!-- 速報KPI（実行完了後に表示） -->
+        <div id="result-preview" class="result-preview hidden">
+          <div class="rp-title">実行結果（速報）</div>
+          <div class="rp-grid">
+            <div><span class="rp-label">総リターン</span><span class="rp-val" id="rp-return">—</span></div>
+            <div><span class="rp-label">勝率</span><span class="rp-val" id="rp-winrate">—</span></div>
+            <div><span class="rp-label">シャープ</span><span class="rp-val" id="rp-sharpe">—</span></div>
+            <div><span class="rp-label">最大DD</span><span class="rp-val" id="rp-dd">—</span></div>
+          </div>
+          <button class="btn-secondary mt-10" onclick="switchTab('dashboard')">ダッシュボードで詳細を見る →</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── 取引履歴 タブ ─── -->
+  <section class="tab-panel" id="panel-trades">
+    <div class="section-title">取引履歴</div>
+
+    <div class="card">
+      <div class="card-header">
+        <span>取引一覧</span>
+        <div class="toolbar">
+          <select id="trades-session-select" class="select-sm">
+            <option value="">セッションを選択...</option>
+          </select>
+          <input type="text" id="trades-filter" class="input-sm" placeholder="銘柄で絞り込み..." />
+        </div>
+      </div>
+
+      <!-- 取引統計ミニカード -->
+      <div class="trade-stats" id="trade-stats" style="display:none">
+        <div class="ts-item"><span class="ts-label">総取引</span><span class="ts-val" id="ts-total">—</span></div>
+        <div class="ts-item positive"><span class="ts-label">勝ち</span><span class="ts-val" id="ts-wins">—</span></div>
+        <div class="ts-item negative"><span class="ts-label">負け</span><span class="ts-val" id="ts-losses">—</span></div>
+        <div class="ts-item"><span class="ts-label">合計PnL</span><span class="ts-val" id="ts-pnl">—</span></div>
+        <div class="ts-item"><span class="ts-label">平均保有日数</span><span class="ts-val" id="ts-hold">—</span></div>
+      </div>
+
+      <!-- チャート: 銘柄別損益 -->
+      <div class="chart-wrap chart-wrap-sm" id="pnl-chart-wrap" style="display:none">
+        <canvas id="pnl-chart"></canvas>
+      </div>
+
+      <div class="table-wrap">
+        <table id="trades-table">
+          <thead>
+            <tr>
+              <th>銘柄</th>
+              <th>買い日</th>
+              <th>売り日</th>
+              <th>買値</th>
+              <th>売値</th>
+              <th>株数</th>
+              <th>損益(円)</th>
+              <th>損益率</th>
+              <th>保有日</th>
+              <th>売り理由</th>
+            </tr>
+          </thead>
+          <tbody id="trades-tbody">
+            <tr><td colspan="10" class="empty">セッションを選択してください</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── AI 分析 タブ ─── -->
+  <section class="tab-panel" id="panel-analysis">
+    <div class="section-title">Claude AI 分析レポート</div>
+
+    <div class="card-header" style="margin-bottom:12px">
+      <select id="analysis-session-select" class="select-sm">
+        <option value="">セッションを選択...</option>
+      </select>
+    </div>
+
+    <div id="analysis-placeholder" class="placeholder-msg">
+      セッションを選択すると Claude AI の分析結果が表示されます。
+    </div>
+
+    <div id="analysis-content" class="hidden">
+      <!-- 良かった点 / 悪かった点 -->
+      <div class="analysis-grid">
+        <div class="card analysis-card good-card">
+          <div class="card-header">✅ 良かった点</div>
+          <ul id="good-points" class="analysis-list"></ul>
+        </div>
+        <div class="card analysis-card bad-card">
+          <div class="card-header">⚠️ 悪かった点</div>
+          <ul id="bad-points" class="analysis-list"></ul>
+        </div>
+      </div>
+
+      <!-- 改善提案 -->
+      <div class="card mt-20">
+        <div class="card-header">💡 改善提案</div>
+        <ul id="improvement-suggestions" class="analysis-list suggestion-list"></ul>
+      </div>
+
+      <!-- 次回推奨パラメータ -->
+      <div class="card mt-20">
+        <div class="card-header">🔧 次回推奨パラメータ</div>
+        <div id="next-params-grid" class="next-params-grid"></div>
+      </div>
+
+      <!-- フル分析テキスト -->
+      <details class="card mt-20">
+        <summary class="card-header" style="cursor:pointer">📄 Claude フル分析テキスト</summary>
+        <pre id="full-analysis-text" class="full-text"></pre>
+      </details>
+    </div>
+  </section>
+
+</main>
+
+<script src="/static/js/app.js"></script>
+</body>
+</html>

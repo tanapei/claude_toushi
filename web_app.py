@@ -26,7 +26,6 @@ from trading_system.config import (
     TOTAL_CAPITAL,
     POSITION_SIZE,
     MAX_POSITIONS,
-    SIGNAL_API_KEY,
     JP_UNIVERSE,
     US_UNIVERSE,
 )
@@ -504,132 +503,6 @@ def get_cumulative_performance():
 
 
 # ─────────────────────────────────────────────
-# 最適化 API
-# ─────────────────────────────────────────────
-
-class OptimizeState:
-    def __init__(self):
-        self.is_running = False
-        self.progress = 0
-        self.message = ""
-        self.result = None
-        self.error = None
-        self.log_queue: queue.Queue = queue.Queue(maxsize=500)
-
-    def reset(self):
-        self.is_running = True
-        self.progress = 0
-        self.message = "初期化中..."
-        self.result = None
-        self.error = None
-        while not self.log_queue.empty():
-            self.log_queue.get_nowait()
-
-    def update(self, current, total, message):
-        pct = int(current / max(total, 1) * 90)
-        self.progress = pct
-        self.message = message
-        self.log_queue.put_nowait({"progress": pct, "message": message})
-
-    def finish(self, result):
-        self.is_running = False
-        self.progress = 100
-        self.result = result
-        self.log_queue.put_nowait({"progress": 100, "message": "最適化完了", "done": True})
-
-    def fail(self, error):
-        self.is_running = False
-        self.error = error
-        self.log_queue.put_nowait({"progress": -1, "message": f"エラー: {error}", "error": True, "done": True})
-
-
-opt_state = OptimizeState()
-
-
-def _opt_worker(start_date, end_date, max_combinations, use_walk_forward, param_grid):
-    from trading_system.optimize import run_optimization
-    try:
-        result = run_optimization(
-            start_date=start_date,
-            end_date=end_date,
-            max_combinations=max_combinations,
-            use_walk_forward=use_walk_forward,
-            param_grid=param_grid if param_grid else None,
-            progress_callback=opt_state.update,
-        )
-        opt_state.finish(result)
-    except Exception as e:
-        logger.exception("最適化エラー")
-        opt_state.fail(str(e))
-
-
-@app.route("/api/optimize", methods=["POST"])
-def start_optimize():
-    if opt_state.is_running:
-        return jsonify({"error": "最適化実行中"}), 409
-
-    data = request.get_json() or {}
-    start_date       = data.get("start_date", BACKTEST_START)
-    end_date         = data.get("end_date", BACKTEST_END)
-    max_combinations = int(data.get("max_combinations", 30))
-    use_wf           = bool(data.get("walk_forward", True))
-    param_grid       = data.get("param_grid", None)
-
-    opt_state.reset()
-    t = threading.Thread(
-        target=_opt_worker,
-        args=(start_date, end_date, max_combinations, use_wf, param_grid),
-        daemon=True,
-    )
-    t.start()
-    return jsonify({"status": "started"})
-
-
-@app.route("/api/optimize/status")
-def opt_status():
-    return jsonify({
-        "is_running": opt_state.is_running,
-        "progress":   opt_state.progress,
-        "message":    opt_state.message,
-        "has_result": opt_state.result is not None,
-        "error":      opt_state.error,
-    })
-
-
-@app.route("/api/optimize/events")
-def opt_sse_events():
-    def generate():
-        yield "data: {}\n\n"
-        while True:
-            try:
-                ev = opt_state.log_queue.get(timeout=30)
-                yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
-                if ev.get("done"):
-                    break
-            except queue.Empty:
-                yield ": keepalive\n\n"
-
-    return Response(
-        stream_with_context(generate()),
-        mimetype="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
-
-
-@app.route("/api/optimize/result")
-def opt_result():
-    if opt_state.result is None:
-        return jsonify({"error": "結果なし"}), 404
-    return jsonify(opt_state.result)
-
-
-@app.route("/api/optimize/default_grid")
-def opt_default_grid():
-    from trading_system.optimize import DEFAULT_PARAM_GRID
-    return jsonify(DEFAULT_PARAM_GRID)
-
-
-# ─────────────────────────────────────────────
 # シグナル配信 API
 # ─────────────────────────────────────────────
 
@@ -637,27 +510,9 @@ def opt_default_grid():
 _latest_signals: dict = {}
 
 
-def _check_signal_auth() -> bool:
-    """シグナル API の簡易認証（SIGNAL_API_KEY が設定されている場合のみ）。"""
-    if not SIGNAL_API_KEY:
-        return True  # キー未設定なら認証スキップ（開発用）
-    key = request.headers.get("X-Signal-Key") or request.args.get("key", "")
-    return key == SIGNAL_API_KEY
-
-
 @app.route("/api/run-signal", methods=["POST", "GET"])
 def run_daily_signal():
-    """
-    デイリーシグナルを生成して結果を返す。
-    毎朝 URL を開いた際に呼び出される（手動または自動）。
-
-    Query params:
-        market: JP（デフォルト）または US
-        key: SIGNAL_API_KEY（設定時のみ）
-    """
-    if not _check_signal_auth():
-        return jsonify({"error": "Unauthorized"}), 401
-
+    """デイリーシグナルを生成して結果を返す。"""
     market = request.args.get("market", "JP").upper()
     if market not in ("JP", "US"):
         return jsonify({"error": "market は JP または US を指定してください"}), 400
@@ -766,26 +621,6 @@ def delete_portfolio_position(ticker: str):
         return jsonify({"status": "removed", "ticker": ticker.upper()})
     return jsonify({"error": f"{ticker} は保有していません"}), 404
 
-
-@app.route("/api/config/signal")
-def get_signal_config():
-    """シグナル設定（cron URL 等）を返す。"""
-    base_url = request.host_url.rstrip("/")
-    jp_url   = f"{base_url}/api/run-signal?market=JP"
-    us_url   = f"{base_url}/api/run-signal?market=US"
-    if SIGNAL_API_KEY:
-        jp_url += f"&key={SIGNAL_API_KEY}"
-        us_url += f"&key={SIGNAL_API_KEY}"
-    return jsonify({
-        "jp_signal_url": jp_url,
-        "us_signal_url": us_url,
-        "jp_schedule": "東京市場引け後（16:30 JST）に確認推奨",
-        "us_schedule": "NY市場引け後（翌朝 07:00 JST）に確認推奨",
-        "total_capital": TOTAL_CAPITAL,
-        "position_size": POSITION_SIZE,
-        "jp_universe_count": len(JP_UNIVERSE),
-        "us_universe_count": len(US_UNIVERSE),
-    })
 
 
 if __name__ == "__main__":

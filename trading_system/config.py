@@ -39,10 +39,6 @@ ANALYSIS_PATH = RESULTS_DIR / "analysis_history.json"
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 CLAUDE_MODEL = "claude-opus-4-6"
 
-# =============================================
-# シグナル配信 API キー（外部 cron からの不正呼び出し防止）
-# =============================================
-SIGNAL_API_KEY = os.getenv("SIGNAL_API_KEY", "")
 
 # =============================================
 # ポートフォリオ設定（実運用）
@@ -55,6 +51,7 @@ POSITION_SIZE    = TOTAL_CAPITAL // MAX_POSITIONS  # 1銘柄 14万円
 # バックテスト互換設定
 # =============================================
 INITIAL_CAPITAL  = 1_000_000
+POSITION_SIZE_PCT = 0.18      # 1銘柄あたり資金割合（バックテスト用）
 COMMISSION_RATE  = 0.001
 
 # =============================================

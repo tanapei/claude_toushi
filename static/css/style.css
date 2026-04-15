@@ -365,9 +365,3 @@ input:focus, select:focus { border-color: var(--primary); }
 .negative { color: var(--negative); }
 .mb-20 { margin-bottom: 20px; }
 
-/* =============================================
-   最適化タブ
-   ============================================= */
-#opt-results-table th { font-size: 11px; }
-#opt-results-table td { font-size: 12px; }
-#opt-results-table tr:first-child td { font-weight: 600; }

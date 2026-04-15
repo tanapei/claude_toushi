@@ -18,11 +18,15 @@ document.addEventListener('DOMContentLoaded', () => {
   loadDefaults();
   loadDashboard();
   loadPortfolio();
+  loadVirtualPortfolioList();
 
   // シグナルタブを開いたら自動で最新シグナルを取得・生成
   document.querySelectorAll('.tab').forEach(btn => {
     if (btn.dataset.tab === 'signal') {
-      btn.addEventListener('click', () => autoLoadSignal());
+      btn.addEventListener('click', async () => {
+        await autoLoadSignal();
+        await loadVirtualPortfolioList();
+      });
     }
   });
 
@@ -694,12 +698,25 @@ function renderSignalResults(data) {
       const price = s.details?.price || 0;
       const posSize = 140000;
       const shares  = price > 0 ? (posSize / price).toFixed(1) : '—';
+      const alreadyVirtual = _virtualTickers.has(s.ticker);
       return `<tr>
         <td><strong>${s.ticker}</strong><br><small style="color:var(--text-muted)">${s.label||''}</small></td>
         <td><span class="badge">${s.score}点</span></td>
         <td>${cur}${price.toLocaleString('ja-JP', {maximumFractionDigits:2})}</td>
         <td>¥140,000<br><small style="color:var(--text-muted)">${shares}株</small></td>
         <td style="font-size:12px;color:var(--text-muted);max-width:240px">${s.explanation||''}</td>
+        <td>
+          ${alreadyVirtual
+            ? `<span style="font-size:11px;color:var(--positive)">✓ 仮登録済</span>`
+            : `<button class="btn-secondary" style="font-size:11px;padding:3px 10px;white-space:nowrap"
+                data-ticker="${escHtml(s.ticker)}"
+                data-price="${price}"
+                data-label="${escHtml(s.label||'')}"
+                data-market="${escHtml(data.market)}"
+                data-score="${s.score}"
+                onclick="virtualRegisterClick(this)">仮登録</button>`
+          }
+        </td>
       </tr>`;
     }).join('');
   } else {
@@ -824,6 +841,150 @@ async function removePosition(ticker) {
       throw new Error(e.error);
     }
     await loadPortfolio();
+  } catch (e) {
+    alert(`削除エラー: ${e.message}`);
+  }
+}
+
+// =============================================
+//  仮保有ポートフォリオ
+// =============================================
+
+// 仮保有中のティッカーセット（ボタン表示制御用）
+let _virtualTickers = new Set();
+
+/** ページ初期化時に仮保有リストだけ高速取得（価格取得なし） */
+async function loadVirtualPortfolioList() {
+  try {
+    const res  = await fetch('/api/virtual-portfolio/list');
+    const data = await res.json();
+    _virtualTickers = new Set((data.positions || []).map(p => p.ticker));
+  } catch (e) {
+    console.warn('仮保有リスト取得失敗:', e);
+  }
+}
+
+/** 現在値を取得して損益付きで表示する（更新ボタン押下時） */
+async function loadVirtualPortfolio() {
+  const tbody = document.getElementById('virtual-portfolio-table');
+  tbody.innerHTML = '<tr><td colspan="9" class="empty" style="color:var(--text-muted)">現在値を取得中... しばらくお待ちください</td></tr>';
+
+  try {
+    const res  = await fetch('/api/virtual-portfolio');
+    const data = await res.json();
+    _virtualTickers = new Set((data.positions || []).map(p => p.ticker));
+    renderVirtualPortfolio(data);
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="9" class="empty">読み込みエラー: ${e.message}</td></tr>`;
+  }
+}
+
+function renderVirtualPortfolio(data) {
+  const tbody   = document.getElementById('virtual-portfolio-table');
+  const summary = document.getElementById('virtual-portfolio-summary');
+  const positions = data.positions || [];
+
+  if (!positions.length) {
+    tbody.innerHTML = '<tr><td colspan="9" class="empty">仮保有なし（買いシグナルで「仮登録」してください）</td></tr>';
+    summary.classList.add('hidden');
+    return;
+  }
+
+  tbody.innerHTML = positions.map(p => {
+    const cur      = p.market === 'JP' ? '¥' : '$';
+    const pnlPos   = p.pnl_pct >= 0;
+    const pnlCls   = pnlPos ? 'pnl-positive' : 'pnl-negative';
+    const sign     = pnlPos ? '+' : '';
+    const curPrice = p.current_price != null
+      ? `${cur}${p.current_price.toLocaleString('ja-JP', {maximumFractionDigits: 2})}`
+      : `<span style="color:var(--negative);font-size:11px">${p.fetch_error || '—'}</span>`;
+
+    return `<tr>
+      <td><strong>${escHtml(p.ticker)}</strong><br>
+          <small style="color:var(--text-muted)">${escHtml(p.label||'')}</small></td>
+      <td>${p.signal_score > 0 ? `<span class="badge">${p.signal_score}点</span>` : '—'}</td>
+      <td>${p.entry_date || '—'}</td>
+      <td>${cur}${(p.entry_price||0).toLocaleString('ja-JP', {maximumFractionDigits:2})}</td>
+      <td>${curPrice}</td>
+      <td class="${pnlCls}">${sign}${(p.pnl_pct||0).toFixed(2)}%</td>
+      <td class="${pnlCls}">${sign}¥${Math.abs(p.pnl_amount||0).toLocaleString()}</td>
+      <td>${p.hold_days}日</td>
+      <td><button class="btn-link" onclick="removeVirtualPosition('${escHtml(p.ticker)}')"
+              style="color:var(--negative)">削除</button></td>
+    </tr>`;
+  }).join('');
+
+  // 合計サマリー
+  summary.classList.remove('hidden');
+  document.getElementById('vp-total-invested').textContent =
+    `¥${(data.total_invested||0).toLocaleString()}`;
+  document.getElementById('vp-total-current').textContent =
+    `¥${(data.total_current||0).toLocaleString()}`;
+
+  const pnl    = data.total_pnl || 0;
+  const pnlPct = data.total_pnl_pct || 0;
+  const sign   = pnl >= 0 ? '+' : '';
+  const cls    = pnl >= 0 ? 'positive' : 'negative';
+  document.getElementById('vp-total-pnl').innerHTML =
+    `<span class="${cls}">${sign}¥${Math.abs(pnl).toLocaleString()}</span>`;
+  document.getElementById('vp-total-pnl-pct').innerHTML =
+    `<span class="${cls}">(${sign}${pnlPct.toFixed(2)}%)</span>`;
+}
+
+/** 買いシグナル行の「仮登録」ボタンから呼ばれる */
+function virtualRegisterClick(btn) {
+  const ticker = btn.dataset.ticker;
+  const price  = parseFloat(btn.dataset.price);
+  const label  = btn.dataset.label;
+  const market = btn.dataset.market;
+  const score  = parseInt(btn.dataset.score, 10);
+  addVirtualPosition(ticker, price, label, market, score);
+}
+
+async function addVirtualPosition(ticker, price, label, market, score) {
+  if (price <= 0) {
+    alert('価格が取得できていません。シグナルを再生成してください。');
+    return;
+  }
+  const today = new Date().toISOString().slice(0, 10);
+  try {
+    const res = await fetch('/api/virtual-portfolio', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ticker,
+        entry_price:  price,
+        market,
+        label,
+        signal_score: score,
+        entry_date:   today,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error);
+    _virtualTickers.add(ticker);
+    // ボタンを「登録済」に変更
+    const btn = document.querySelector(`[data-ticker="${ticker}"]`);
+    if (btn) {
+      btn.outerHTML = `<span style="font-size:11px;color:var(--positive)">✓ 仮登録済</span>`;
+    }
+    // 仮保有テーブルを高速リストで更新（価格取得なし）
+    await loadVirtualPortfolioList();
+  } catch (e) {
+    alert(`仮登録エラー: ${e.message}`);
+  }
+}
+
+async function removeVirtualPosition(ticker) {
+  if (!confirm(`${ticker} を仮保有リストから削除しますか？`)) return;
+  try {
+    const res = await fetch(`/api/virtual-portfolio/${ticker}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const e = await res.json();
+      throw new Error(e.error);
+    }
+    _virtualTickers.delete(ticker);
+    await loadVirtualPortfolio();
   } catch (e) {
     alert(`削除エラー: ${e.message}`);
   }

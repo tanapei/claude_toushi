@@ -152,7 +152,7 @@
         <div class="table-wrap">
           <table>
             <thead><tr>
-              <th>銘柄</th><th>スコア</th><th>現在値</th><th>投資額</th><th>Claude解説</th>
+              <th>銘柄</th><th>スコア</th><th>現在値</th><th>投資額</th><th>Claude解説</th><th>操作</th>
             </tr></thead>
             <tbody id="buy-signal-table"></tbody>
           </table>
@@ -180,6 +180,33 @@
         <p>🇯🇵 <strong style="color:var(--text)">日本株</strong>: 東京市場引け後（<strong style="color:var(--text)">16:30以降</strong>）にこのタブを開いてシグナル生成</p>
         <p>🇺🇸 <strong style="color:var(--text)">米国株</strong>: NY市場引け後（<strong style="color:var(--text)">翌朝 07:00以降</strong>）にこのタブを開いてシグナル生成</p>
         <p style="margin-top:8px;font-size:12px">※ シグナルタブを開くと前回から6時間以上経過している場合は自動更新します</p>
+      </div>
+    </div>
+
+    <!-- 仮保有追跡 -->
+    <div class="card mb-20">
+      <div class="card-header">
+        📊 仮保有追跡（シグナル検証）
+        <button class="btn-secondary" onclick="loadVirtualPortfolio()" style="font-size:12px;padding:4px 12px">現在値を更新</button>
+      </div>
+      <p style="font-size:12px;color:var(--text-muted);margin:0 0 12px">
+        買いシグナルの「仮登録」ボタンで登録した銘柄の損益を追跡します。実際に購入しなくてもシグナルの精度を検証できます。
+      </p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th>銘柄</th><th>スコア</th><th>登録日</th><th>登録価格</th><th>現在値</th><th>損益(率)</th><th>損益(円)</th><th>保有日数</th><th>操作</th>
+          </tr></thead>
+          <tbody id="virtual-portfolio-table">
+            <tr><td colspan="9" class="empty">仮保有なし（買いシグナルで「仮登録」してください）</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <!-- 合計サマリー -->
+      <div id="virtual-portfolio-summary" class="hidden" style="margin-top:12px;padding:12px 16px;background:var(--card-bg-2,rgba(255,255,255,.03));border-radius:8px;font-size:13px;display:flex;gap:20px;flex-wrap:wrap">
+        <span>仮投資合計: <strong id="vp-total-invested">—</strong></span>
+        <span>現在評価額: <strong id="vp-total-current">—</strong></span>
+        <span>合計損益: <strong id="vp-total-pnl">—</strong> <span id="vp-total-pnl-pct"></span></span>
       </div>
     </div>
 

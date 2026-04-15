@@ -622,6 +622,67 @@ def delete_portfolio_position(ticker: str):
     return jsonify({"error": f"{ticker} は保有していません"}), 404
 
 
+# ─────────────────────────────────────────────
+# 仮保有ポートフォリオ API
+# ─────────────────────────────────────────────
+
+@app.route("/api/virtual-portfolio", methods=["GET"])
+def get_virtual_portfolio():
+    """仮保有ポジション一覧（現在の損益付き）を返す。"""
+    from trading_system.virtual_portfolio import VirtualPortfolio
+    vp = VirtualPortfolio()
+    return jsonify(vp.get_positions_with_pnl())
+
+
+@app.route("/api/virtual-portfolio/list", methods=["GET"])
+def get_virtual_portfolio_list():
+    """現在値取得なしで仮保有リストだけを返す（高速）。"""
+    from trading_system.virtual_portfolio import VirtualPortfolio
+    vp = VirtualPortfolio()
+    return jsonify({
+        "positions": list(vp.positions.values()),
+        "count": len(vp.positions),
+    })
+
+
+@app.route("/api/virtual-portfolio", methods=["POST"])
+def add_virtual_portfolio_position():
+    """買いシグナルから仮保有ポジションを登録する。"""
+    from trading_system.virtual_portfolio import VirtualPortfolio
+    data = request.get_json() or {}
+
+    ticker       = data.get("ticker", "").upper().strip()
+    entry_price  = float(data.get("entry_price", 0))
+    market       = data.get("market", "JP").upper()
+    label        = data.get("label", "")
+    signal_score = int(data.get("signal_score", 0))
+    entry_date   = data.get("entry_date", "")
+
+    if not ticker or entry_price <= 0:
+        return jsonify({"error": "ticker と entry_price は必須です"}), 400
+
+    vp = VirtualPortfolio()
+    pos = vp.add_position(
+        ticker=ticker,
+        entry_price=entry_price,
+        market=market,
+        label=label,
+        signal_score=signal_score,
+        entry_date=entry_date,
+    )
+    return jsonify({"status": "added", "position": pos})
+
+
+@app.route("/api/virtual-portfolio/<ticker>", methods=["DELETE"])
+def delete_virtual_portfolio_position(ticker: str):
+    """仮保有ポジションを削除する。"""
+    from trading_system.virtual_portfolio import VirtualPortfolio
+    vp = VirtualPortfolio()
+    removed = vp.remove_position(ticker.upper())
+    if removed:
+        return jsonify({"status": "removed", "ticker": ticker.upper()})
+    return jsonify({"error": f"{ticker} は仮保有していません"}), 404
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))

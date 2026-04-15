@@ -254,6 +254,17 @@ input:focus, select:focus { border-color: var(--primary); }
 }
 .btn-link:hover { color: var(--primary-d); }
 
+.btn-cancel {
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; color: var(--negative);
+  border: 1px solid var(--negative); border-radius: 8px; padding: 10px 24px;
+  font-size: 14px; font-weight: 600; cursor: pointer;
+  transition: background .15s;
+  width: 100%; margin-top: 8px;
+}
+.btn-cancel:hover   { background: rgba(247,95,95,.1); }
+.btn-cancel:disabled { opacity: .5; cursor: not-allowed; }
+
 /* =============================================
    実行タブ レイアウト
    ============================================= */

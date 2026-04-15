@@ -130,6 +130,7 @@ async function startBacktest() {
   const btn = document.getElementById('run-btn');
   btn.disabled = true;
   document.getElementById('run-btn-text').textContent = '⏳ 実行中...';
+  document.getElementById('cancel-btn').classList.remove('hidden');
   document.getElementById('result-preview').classList.add('hidden');
   clearLog();
   setProgress(0, '接続中...');
@@ -556,6 +557,19 @@ function unlockRunBtn() {
   const btn = document.getElementById('run-btn');
   btn.disabled = false;
   document.getElementById('run-btn-text').textContent = '▶ バックテスト開始';
+  document.getElementById('cancel-btn').classList.add('hidden');
+}
+
+async function cancelRun() {
+  const cancelBtn = document.getElementById('cancel-btn');
+  cancelBtn.disabled = true;
+  cancelBtn.textContent = 'キャンセル中...';
+  try {
+    await fetch('/api/cancel', { method: 'POST' });
+    appendLog('キャンセルをリクエストしました。処理が停止するまでお待ちください...', 'log-error');
+  } catch (e) {
+    appendLog('キャンセルリクエストに失敗しました', 'log-error');
+  }
 }
 
 function fmt_pct(v) {

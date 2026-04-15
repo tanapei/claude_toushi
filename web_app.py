@@ -56,6 +56,7 @@ class RunState:
     def __init__(self):
         self.lock = threading.Lock()
         self.is_running = False
+        self.cancel_requested = False
         self.run_id: Optional[str] = None
         self.progress = 0        # 0-100
         self.message = ""
@@ -66,6 +67,7 @@ class RunState:
     def reset(self):
         with self.lock:
             self.is_running = True
+            self.cancel_requested = False
             self.progress = 0
             self.message = "初期化中..."
             self.error = None
@@ -95,10 +97,15 @@ class RunState:
             self.message = f"エラー: {error}"
         self.log_queue.put_nowait({"progress": -1, "message": f"エラー: {error}", "error": True, "done": True})
 
+    def is_cancelled(self) -> bool:
+        with self.lock:
+            return self.cancel_requested
+
     def snapshot(self) -> dict:
         with self.lock:
             return {
                 "is_running": self.is_running,
+                "cancel_requested": self.cancel_requested,
                 "run_id": self.run_id,
                 "progress": self.progress,
                 "message": self.message,
@@ -126,15 +133,12 @@ class ProgressBacktester:
         self.iterations = iterations
 
     def run(self):
-        from trading_system.backtest import Backtester, run_iterative_backtest
-        from trading_system.config import VALID_UNIVERSE
-
-        run_state.update(5, "株価データを取得中...")
-
         try:
             if self.mode == "iterative":
                 results = self._run_iterative()
-                # 最終結果を集約
+                if run_state.is_cancelled():
+                    run_state.fail("キャンセルされました")
+                    return
                 final_result = {
                     "mode": "iterative",
                     "iterations": [
@@ -149,6 +153,9 @@ class ProgressBacktester:
                 run_state.finish(final_result)
             else:
                 result = self._run_single()
+                if run_state.is_cancelled():
+                    run_state.fail("キャンセルされました")
+                    return
                 final_result = {
                     "mode": "single",
                     "run_id": result["run_id"],
@@ -164,7 +171,6 @@ class ProgressBacktester:
         from trading_system.backtest import Backtester
 
         run_state.update(10, "バックテストエンジン初期化中...")
-
         backtester = Backtester(
             start_date=self.start_date,
             end_date=self.end_date,
@@ -172,18 +178,26 @@ class ProgressBacktester:
         )
         run_state.run_id = backtester.run_id
 
-        run_state.update(15, "データ取得・指標計算中...")
+        run_state.update(15, "データ取得中...")
         backtester._load_data()
 
         run_state.update(30, "テクニカル指標を計算中...")
         backtester._add_indicators()
 
         run_state.update(40, "シミュレーション実行中...")
-        # シミュレーションを段階的に進捗更新しながら実行
-        self._patch_simulation(backtester)
-        backtester._run_simulation()
 
-        run_state.update(85, "結果を集計・保存中...")
+        def sim_cb(pct, msg):
+            run_state.update(40 + int(pct * 0.44), msg)
+
+        backtester._run_simulation(
+            progress_callback=sim_cb,
+            cancel_check=run_state.is_cancelled,
+        )
+
+        if run_state.is_cancelled():
+            return {"run_id": backtester.run_id, "summary": {}, "analysis": None}
+
+        run_state.update(86, "結果を集計・保存中...")
         summary = backtester.portfolio.get_summary()
         summary["start_date"] = backtester.start_date
         summary["end_date"] = backtester.end_date
@@ -201,14 +215,39 @@ class ProgressBacktester:
 
     def _run_iterative(self):
         from trading_system.backtest import Backtester
+        from trading_system.data_fetcher import load_universe_data, get_benchmark_data
+
         results = []
         params = self.strategy_params.copy()
 
-        for i in range(1, self.iterations + 1):
-            base_pct = int((i - 1) / self.iterations * 85)
-            iter_pct = int(i / self.iterations * 85)
+        # ─── データは1回だけダウンロード ───
+        run_state.update(5, "株価データを取得中（全イテレーション共通）...")
+        raw_data = load_universe_data(self.start_date, self.end_date)
+        if not raw_data:
+            raise RuntimeError("株価データの取得に失敗しました")
 
-            run_state.update(base_pct + 5, f"イテレーション {i}/{self.iterations} 開始...")
+        run_state.update(12, "日経225データを取得中...")
+        nikkei_raw = get_benchmark_data(self.start_date, self.end_date)
+
+        all_dates_set: set = set()
+        for df in raw_data.values():
+            all_dates_set.update(df.index.tolist())
+        all_dates = sorted(all_dates_set)
+
+        run_state.update(15, f"データ取得完了 ({len(raw_data)}銘柄 / {len(all_dates)}営業日)")
+
+        # ─── 各イテレーション ───
+        # 進捗帯域: 15〜90% を iterations 等分
+        band = (90 - 15) // self.iterations
+
+        for i in range(1, self.iterations + 1):
+            if run_state.is_cancelled():
+                break
+
+            base = 15 + (i - 1) * band
+            end  = 15 + i * band
+
+            run_state.update(base, f"イテレーション {i}/{self.iterations} 開始...")
 
             backtester = Backtester(
                 start_date=self.start_date,
@@ -218,112 +257,57 @@ class ProgressBacktester:
             if i == 1:
                 run_state.run_id = backtester.run_id
 
-            run_state.update(base_pct + 10, f"[{i}/{self.iterations}] データ取得中...")
-            backtester._load_data()
+            # プリロード済みデータを注入（再ダウンロード不要）
+            backtester.set_raw_data(raw_data, nikkei_raw, all_dates)
 
-            run_state.update(base_pct + 15, f"[{i}/{self.iterations}] 指標計算中...")
+            run_state.update(base + 2, f"[{i}/{self.iterations}] 指標計算中...")
             backtester._add_indicators()
 
-            run_state.update(base_pct + 20, f"[{i}/{self.iterations}] シミュレーション実行中...")
-            backtester._run_simulation()
+            # シミュレーション（進捗コールバック付き）
+            sim_span = end - base - 10
 
-            run_state.update(iter_pct - 5, f"[{i}/{self.iterations}] 結果保存・AI分析中...")
+            def make_cb(b, span, idx, total):
+                def cb(pct, msg):
+                    run_state.update(b + 4 + int(pct / 100 * span), f"[{idx}/{total}] {msg}")
+                return cb
+
+            run_state.update(base + 4, f"[{i}/{self.iterations}] シミュレーション実行中...")
+            backtester._run_simulation(
+                progress_callback=make_cb(base, sim_span, i, self.iterations),
+                cancel_check=run_state.is_cancelled,
+            )
+
+            if run_state.is_cancelled():
+                break
+
+            run_state.update(end - 6, f"[{i}/{self.iterations}] 結果を保存中...")
             summary = backtester.portfolio.get_summary()
             summary["start_date"] = backtester.start_date
             summary["end_date"] = backtester.end_date
             backtester._save_results(summary)
+
+            run_state.update(end - 3, f"[{i}/{self.iterations}] Claude AI が分析中...")
             analysis = backtester._run_analysis(summary)
 
-            result = {
+            results.append({
                 "run_id": backtester.run_id,
                 "summary": summary,
                 "analysis": analysis,
-            }
-            results.append(result)
+            })
 
-            # 次のイテレーションのパラメータを更新
+            # 次イテレーションのパラメータをClaudeの提案から更新
             if analysis and i < self.iterations:
                 next_params = analysis.get("next_strategy_params", {})
                 if next_params:
                     params = next_params
-                    run_state.update(iter_pct, f"[{i}/{self.iterations}] パラメータ更新: EMA({params.get('ema_fast')}/{params.get('ema_slow')})")
+                    run_state.update(
+                        end,
+                        f"[{i}/{self.iterations}] パラメータ更新: "
+                        f"EMA({params.get('ema_fast')}/{params.get('ema_slow')}), "
+                        f"RSI({params.get('rsi_lower')}-{params.get('rsi_upper')})",
+                    )
 
         return results
-
-    def _patch_simulation(self, backtester):
-        """シミュレーションに進捗コールバックを注入する"""
-        original = backtester._run_simulation
-
-        def patched():
-            all_dates = backtester.all_dates
-            n = len(all_dates)
-            orig_run = backtester._run_simulation
-
-            # モンキーパッチで進捗を更新
-            import trading_system.backtest as bt_module
-            original_fn = bt_module.Backtester._run_simulation
-
-            def _run_sim_with_progress(self_inner):
-                from trading_system.strategy import generate_buy_signal, generate_sell_signal, rank_by_momentum
-                params = self_inner.strategy_params
-                top_n = params.get("top_n_momentum", 10)
-
-                for i, date in enumerate(self_inner.all_dates):
-                    if i % max(1, n // 20) == 0:
-                        pct = 40 + int(i / n * 40)
-                        run_state.update(pct, f"シミュレーション中... {date.date()} ({i}/{n}日)")
-
-                    current_prices = self_inner._get_prices_at(date)
-
-                    positions_to_sell = []
-                    for ticker, pos in list(self_inner.portfolio.positions.items()):
-                        if ticker not in self_inner.data or date not in self_inner.data[ticker].index:
-                            continue
-                        sell_signal = generate_sell_signal(
-                            df=self_inner.data[ticker],
-                            date=date,
-                            entry_price=pos.entry_price,
-                            highest_price=pos.highest_price,
-                            params=params,
-                        )
-                        if sell_signal:
-                            positions_to_sell.append((ticker, sell_signal))
-
-                    for ticker, signal in positions_to_sell:
-                        self_inner.portfolio.sell(
-                            ticker=ticker, date=date,
-                            price=signal.price, reason=signal.reason,
-                            indicators=signal.indicators,
-                        )
-
-                    if len(self_inner.portfolio.positions) < self_inner.portfolio.max_positions:
-                        candidates = rank_by_momentum(self_inner.data, date, top_n)
-                        for ticker in candidates:
-                            if ticker in self_inner.portfolio.positions:
-                                continue
-                            if len(self_inner.portfolio.positions) >= self_inner.portfolio.max_positions:
-                                break
-                            if ticker not in self_inner.data or date not in self_inner.data[ticker].index:
-                                continue
-                            buy_signal = generate_buy_signal(
-                                df=self_inner.data[ticker], date=date, params=params
-                            )
-                            if buy_signal:
-                                buy_signal.ticker = ticker
-                                self_inner.portfolio.buy(
-                                    ticker=ticker, date=date,
-                                    price=buy_signal.price, reason=buy_signal.reason,
-                                    indicators=buy_signal.indicators,
-                                )
-
-                    self_inner.portfolio.update_trailing_stops(date, current_prices)
-                    self_inner.portfolio.record_equity(date, current_prices)
-
-                self_inner._close_all_positions()
-
-            backtester._run_simulation = lambda: _run_sim_with_progress(backtester)
-
-        patched()
 
 
 def _worker(start_date, end_date, strategy_params, mode, iterations):
@@ -385,6 +369,16 @@ def start_run():
     t.start()
 
     return jsonify({"status": "started", "mode": mode})
+
+
+@app.route("/api/cancel", methods=["POST"])
+def cancel_run():
+    """実行中のバックテストをキャンセルする"""
+    with run_state.lock:
+        if run_state.is_running:
+            run_state.cancel_requested = True
+            return jsonify({"status": "cancelling"})
+    return jsonify({"status": "not_running"})
 
 
 @app.route("/api/status")

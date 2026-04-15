@@ -136,6 +136,27 @@ class Backtester:
         self.all_dates = sorted(all_dates_set)
         logger.info(f"取引日数: {len(self.all_dates)}日")
 
+    def set_raw_data(
+        self,
+        raw_data: Dict[str, pd.DataFrame],
+        nikkei_raw: pd.DataFrame,
+        all_dates: List[pd.Timestamp],
+    ) -> None:
+        """
+        プリロード済みの生データを注入する。
+        イテレーティブモードで毎回ダウンロードを避けるために使用。
+        呼び出し後に _add_indicators() を別途実行すること。
+        """
+        self.data = {ticker: df.copy() for ticker, df in raw_data.items()}
+        self.all_dates = list(all_dates)
+        if not nikkei_raw.empty:
+            regime_period = self.strategy_params.get("market_regime_ema", 50)
+            nikkei_copy = nikkei_raw.copy()
+            nikkei_copy["regime_ema"] = nikkei_copy["close"].ewm(
+                span=regime_period, adjust=False
+            ).mean()
+            self.nikkei_data = nikkei_copy
+
     def _add_indicators(self) -> None:
         """全銘柄にテクニカル指標を追加する。"""
         logger.info("テクニカル指標を計算中...")
@@ -146,27 +167,34 @@ class Backtester:
                 logger.warning(f"[{ticker}] 指標計算エラー: {e}")
                 del self.data[ticker]
 
-    def _run_simulation(self) -> None:
-        """メインのシミュレーションループ。"""
+    def _run_simulation(self, progress_callback=None, cancel_check=None) -> None:
+        """
+        メインのシミュレーションループ。
+
+        Args:
+            progress_callback: (pct: int, msg: str) -> None  進捗通知コールバック
+            cancel_check: () -> bool  True を返したらループを中断
+        """
         params = self.strategy_params
         top_n = params.get("top_n_momentum", 10)
 
         logger.info("シミュレーション開始...")
         n_dates = len(self.all_dates)
+        step = max(1, n_dates // 20)
 
         for i, date in enumerate(self.all_dates):
-            if i % 50 == 0:
-                pct = i / n_dates * 100
-                equity = self.portfolio.cash + sum(
-                    pos.shares * self.data.get(pos.ticker, pd.DataFrame()).loc[
-                        date if date in self.data.get(pos.ticker, pd.DataFrame()).index else
-                        self.data.get(pos.ticker, pd.DataFrame()).index[-1]
-                    ]["close"]
-                    if pos.ticker in self.data and len(self.data[pos.ticker]) > 0
-                    else pos.entry_price
-                    for pos in self.portfolio.positions.values()
-                )
-                logger.info(f"進捗: {pct:.0f}% ({date.date()}) | 資産: ¥{equity:,.0f} | ポジション: {len(self.portfolio.positions)}")
+            # キャンセル確認
+            if cancel_check and cancel_check():
+                logger.info("シミュレーションがキャンセルされました")
+                break
+
+            if i % step == 0:
+                pct = int(i / n_dates * 100)
+                msg = f"シミュレーション中... {date.date()} ({i}/{n_dates}日)"
+                if progress_callback:
+                    progress_callback(pct, msg)
+                else:
+                    logger.info(f"進捗: {pct}% ({date.date()}) | ポジション: {len(self.portfolio.positions)}")
 
             # 現在価格の辞書
             current_prices = self._get_prices_at(date)

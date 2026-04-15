@@ -23,6 +23,12 @@ from trading_system.config import (
     STRATEGY_PARAMS,
     VALID_UNIVERSE,
     INITIAL_CAPITAL,
+    TOTAL_CAPITAL,
+    POSITION_SIZE,
+    MAX_POSITIONS,
+    SIGNAL_API_KEY,
+    JP_UNIVERSE,
+    US_UNIVERSE,
 )
 from trading_system.trade_logger import TradeLogger
 
@@ -621,6 +627,166 @@ def opt_result():
 def opt_default_grid():
     from trading_system.optimize import DEFAULT_PARAM_GRID
     return jsonify(DEFAULT_PARAM_GRID)
+
+
+# ─────────────────────────────────────────────
+# シグナル配信 API
+# ─────────────────────────────────────────────
+
+# 最新シグナル結果をメモリにキャッシュ
+_latest_signals: dict = {}
+
+
+def _check_signal_auth() -> bool:
+    """シグナル API の簡易認証（SIGNAL_API_KEY が設定されている場合のみ）。"""
+    if not SIGNAL_API_KEY:
+        return True  # キー未設定なら認証スキップ（開発用）
+    key = request.headers.get("X-Signal-Key") or request.args.get("key", "")
+    return key == SIGNAL_API_KEY
+
+
+@app.route("/api/run-signal", methods=["POST", "GET"])
+def run_daily_signal():
+    """
+    デイリーシグナルを生成して LINE に通知する。
+    外部 cron（cron-job.org 等）から定期的に呼び出す。
+
+    Query params:
+        market: JP（デフォルト）または US
+        key: SIGNAL_API_KEY（設定時のみ）
+    """
+    if not _check_signal_auth():
+        return jsonify({"error": "Unauthorized"}), 401
+
+    market = request.args.get("market", "JP").upper()
+    if market not in ("JP", "US"):
+        return jsonify({"error": "market は JP または US を指定してください"}), 400
+
+    try:
+        from trading_system.signal_runner import SignalRunner
+        runner = SignalRunner(market=market)
+        result = runner.run()
+        _latest_signals[market] = result
+        return jsonify({
+            "status": "ok",
+            "market": market,
+            "buy_count": len(result.get("buy_signals", [])),
+            "sell_count": len(result.get("sell_signals", [])),
+            "market_bullish": result.get("market_bullish", True),
+            "timestamp": result.get("timestamp"),
+        })
+    except Exception as e:
+        logger.exception(f"シグナル生成エラー ({market})")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/signals/latest")
+def get_latest_signals():
+    """最新シグナル結果を返す（Web UI 用）。"""
+    market = request.args.get("market", "JP").upper()
+    result = _latest_signals.get(market)
+    if not result:
+        return jsonify({"error": "シグナル未生成", "message": "まだシグナルが生成されていません"}), 404
+
+    # top_scored の reasons を短縮して返す
+    top = []
+    for s in result.get("top_scored", [])[:15]:
+        from trading_system.factor_scorer import get_ticker_label
+        top.append({
+            "ticker": s["ticker"],
+            "label": get_ticker_label(s["ticker"]),
+            "score": s["score"],
+            "signal": s["signal"],
+            "momentum_6m_pct": s.get("momentum_6m_pct", 0),
+            "rsi": s.get("details", {}).get("rsi", 0),
+            "price": s.get("details", {}).get("price", 0),
+        })
+
+    return jsonify({
+        "market": market,
+        "buy_signals": result.get("buy_signals", []),
+        "sell_signals": result.get("sell_signals", []),
+        "market_bullish": result.get("market_bullish", True),
+        "top_scored": top,
+        "timestamp": result.get("timestamp"),
+    })
+
+
+# ─────────────────────────────────────────────
+# ポートフォリオ管理 API
+# ─────────────────────────────────────────────
+
+@app.route("/api/portfolio", methods=["GET"])
+def get_portfolio():
+    """現在の保有ポジションを返す。"""
+    from trading_system.portfolio_state import PortfolioState
+    portfolio = PortfolioState()
+    return jsonify({
+        **portfolio.to_dict(),
+        "total_capital": TOTAL_CAPITAL,
+        "position_size": POSITION_SIZE,
+        "max_positions": MAX_POSITIONS,
+    })
+
+
+@app.route("/api/portfolio", methods=["POST"])
+def add_portfolio_position():
+    """ポジションを追加する（手動入力）。"""
+    from trading_system.portfolio_state import PortfolioState
+    data = request.get_json() or {}
+
+    ticker       = data.get("ticker", "").upper().strip()
+    entry_price  = float(data.get("entry_price", 0))
+    shares       = float(data.get("shares", 0))
+    entry_date   = data.get("entry_date", "")
+    market       = data.get("market", "JP").upper()
+
+    if not ticker or entry_price <= 0 or shares <= 0:
+        return jsonify({"error": "ticker, entry_price, shares は必須です"}), 400
+
+    portfolio = PortfolioState()
+    pos = portfolio.add_position(
+        ticker=ticker,
+        entry_price=entry_price,
+        shares=shares,
+        entry_date=entry_date,
+        market=market,
+        invested_amount=int(entry_price * shares),
+    )
+    return jsonify({"status": "added", "position": pos})
+
+
+@app.route("/api/portfolio/<ticker>", methods=["DELETE"])
+def delete_portfolio_position(ticker: str):
+    """ポジションを削除する（売却後の手動削除）。"""
+    from trading_system.portfolio_state import PortfolioState
+    portfolio = PortfolioState()
+    removed = portfolio.remove_position(ticker.upper())
+    if removed:
+        return jsonify({"status": "removed", "ticker": ticker.upper()})
+    return jsonify({"error": f"{ticker} は保有していません"}), 404
+
+
+@app.route("/api/config/signal")
+def get_signal_config():
+    """シグナル設定（cron URL 等）を返す。"""
+    base_url = request.host_url.rstrip("/")
+    jp_url   = f"{base_url}/api/run-signal?market=JP"
+    us_url   = f"{base_url}/api/run-signal?market=US"
+    if SIGNAL_API_KEY:
+        jp_url += f"&key={SIGNAL_API_KEY}"
+        us_url += f"&key={SIGNAL_API_KEY}"
+    return jsonify({
+        "jp_signal_url": jp_url,
+        "us_signal_url": us_url,
+        "jp_schedule": "16:30 JST（東京市場引け後）",
+        "us_schedule": "07:00 JST（NY市場引け後）",
+        "line_configured": bool(__import__("trading_system.config", fromlist=["LINE_NOTIFY_TOKEN"]).LINE_NOTIFY_TOKEN),
+        "total_capital": TOTAL_CAPITAL,
+        "position_size": POSITION_SIZE,
+        "jp_universe_count": len(JP_UNIVERSE),
+        "us_universe_count": len(US_UNIVERSE),
+    })
 
 
 if __name__ == "__main__":

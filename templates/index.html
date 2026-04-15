@@ -23,6 +23,7 @@
     </div>
     <nav class="tabs" role="tablist">
       <button class="tab active" data-tab="dashboard" role="tab">ダッシュボード</button>
+      <button class="tab" data-tab="signal"    role="tab">📱 シグナル</button>
       <button class="tab" data-tab="run"       role="tab">バックテスト実行</button>
       <button class="tab" data-tab="trades"    role="tab">取引履歴</button>
       <button class="tab" data-tab="analysis"  role="tab">AI 分析</button>
@@ -101,6 +102,133 @@
           </tbody>
         </table>
       </div>
+    </div>
+  </section>
+
+  <!-- ─── シグナル タブ ─── -->
+  <section class="tab-panel" id="panel-signal">
+    <div class="section-title">📱 デイリー売買シグナル</div>
+
+    <!-- 市場選択 + 手動実行 -->
+    <div class="card mb-20">
+      <div class="card-header">シグナル生成</div>
+      <div class="form-row" style="align-items:flex-end">
+        <div class="form-group" style="margin:0">
+          <label>対象市場</label>
+          <select id="signal-market" class="select-sm">
+            <option value="JP">🇯🇵 日本株</option>
+            <option value="US">🇺🇸 米国株</option>
+          </select>
+        </div>
+        <button class="btn-secondary" onclick="runSignal()" id="signal-run-btn">
+          ▶ 今すぐシグナル生成
+        </button>
+        <button class="btn-secondary" onclick="loadSignal()" id="signal-load-btn">
+          🔄 最新シグナルを表示
+        </button>
+      </div>
+      <p id="signal-status" style="margin-top:10px;font-size:12px;color:var(--text-muted)"></p>
+    </div>
+
+    <!-- 市場レジーム + シグナル結果 -->
+    <div id="signal-results" class="hidden">
+      <div id="regime-banner" style="padding:10px 16px;border-radius:8px;margin-bottom:16px;font-weight:600;font-size:14px"></div>
+
+      <!-- 売りシグナル -->
+      <div id="sell-signal-card" class="card mb-20 hidden">
+        <div class="card-header" style="color:var(--negative)">📉 売りシグナル</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th>銘柄</th><th>現在値</th><th>損益</th><th>理由</th><th>Claude解説</th>
+            </tr></thead>
+            <tbody id="sell-signal-table"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 買いシグナル -->
+      <div id="buy-signal-card" class="card mb-20 hidden">
+        <div class="card-header" style="color:var(--positive)">📈 買いシグナル</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th>銘柄</th><th>スコア</th><th>現在値</th><th>投資額</th><th>Claude解説</th>
+            </tr></thead>
+            <tbody id="buy-signal-table"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- スコアランキング -->
+      <div class="card mb-20">
+        <div class="card-header">全銘柄スコアランキング（上位15）</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th>順位</th><th>銘柄</th><th>スコア</th><th>6Mリターン</th><th>RSI</th><th>シグナル</th>
+            </tr></thead>
+            <tbody id="score-ranking-table"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- cron設定ガイド -->
+    <div class="card mb-20" id="cron-guide-card">
+      <div class="card-header">自動通知のセットアップ（cron-job.org）</div>
+      <div id="cron-urls" style="font-size:13px;line-height:2">
+        <p style="color:var(--text-muted)">読み込み中...</p>
+      </div>
+    </div>
+
+    <!-- ポートフォリオ管理 -->
+    <div class="card">
+      <div class="card-header">
+        💼 現在の保有ポジション
+        <button class="btn-secondary" onclick="loadPortfolio()" style="font-size:12px;padding:4px 12px">更新</button>
+      </div>
+      <div class="table-wrap mb-20">
+        <table>
+          <thead><tr>
+            <th>銘柄</th><th>市場</th><th>取得日</th><th>取得価格</th><th>株数</th><th>投資額</th><th>操作</th>
+          </tr></thead>
+          <tbody id="portfolio-table">
+            <tr><td colspan="7" class="empty">保有なし</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- ポジション追加フォーム -->
+      <details class="param-details">
+        <summary>＋ ポジションを手動追加</summary>
+        <div class="param-grid" style="margin-top:16px">
+          <div class="form-group">
+            <label>ティッカー（例: 7203.T / AAPL）</label>
+            <input type="text" id="pos-ticker" placeholder="7203.T" />
+          </div>
+          <div class="form-group">
+            <label>市場</label>
+            <select id="pos-market">
+              <option value="JP">日本株</option>
+              <option value="US">米国株</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>取得価格</label>
+            <input type="number" id="pos-price" placeholder="2500" step="0.01" />
+          </div>
+          <div class="form-group">
+            <label>株数</label>
+            <input type="number" id="pos-shares" placeholder="56" step="0.1" />
+          </div>
+          <div class="form-group">
+            <label>取得日</label>
+            <input type="date" id="pos-date" />
+          </div>
+        </div>
+        <button class="btn-primary" style="max-width:200px;margin-top:8px" onclick="addPosition()">追加</button>
+      </details>
     </div>
   </section>
 

@@ -17,6 +17,8 @@ document.addEventListener('DOMContentLoaded', () => {
   initRunForm();
   loadDefaults();
   loadDashboard();
+  loadCronGuide();
+  loadPortfolio();
 
   // 30秒ごとにダッシュボードを自動更新
   setInterval(() => {
@@ -791,4 +793,236 @@ function optAppendLog(msg, cls = 'log-entry') {
 function unlockOptBtn() {
   const btn = document.getElementById('opt-run-btn');
   if (btn) { btn.disabled = false; document.getElementById('opt-btn-text').textContent = '🔬 最適化開始'; }
+}
+
+// =============================================
+//  シグナルタブ
+// =============================================
+
+async function runSignal() {
+  const market = document.getElementById('signal-market').value;
+  const btn    = document.getElementById('signal-run-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ 生成中...';
+  setSignalStatus(`${market} のシグナルを生成中です（1〜2分かかります）...`);
+
+  try {
+    const res = await fetch(`/api/run-signal?market=${market}`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    setSignalStatus(`完了: 買い${data.buy_count}件 / 売り${data.sell_count}件`);
+    await loadSignal();
+  } catch (e) {
+    setSignalStatus(`エラー: ${e.message}`, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '▶ 今すぐシグナル生成';
+  }
+}
+
+async function loadSignal() {
+  const market = document.getElementById('signal-market').value;
+  setSignalStatus('最新シグナルを取得中...');
+  try {
+    const res  = await fetch(`/api/signals/latest?market=${market}`);
+    if (!res.ok) {
+      const e = await res.json();
+      setSignalStatus(e.message || 'シグナル未生成', true);
+      return;
+    }
+    const data = await res.json();
+    renderSignalResults(data);
+    setSignalStatus(`${data.timestamp ? new Date(data.timestamp).toLocaleString('ja-JP') : ''} 取得`);
+  } catch (e) {
+    setSignalStatus(`エラー: ${e.message}`, true);
+  }
+}
+
+function renderSignalResults(data) {
+  document.getElementById('signal-results').classList.remove('hidden');
+
+  // 市場レジームバナー
+  const banner = document.getElementById('regime-banner');
+  if (data.market_bullish) {
+    banner.style.background = 'rgba(62,207,142,.1)';
+    banner.style.border     = '1px solid rgba(62,207,142,.3)';
+    banner.style.color      = 'var(--positive)';
+    banner.textContent      = `📈 ${data.market === 'JP' ? '日経225' : 'Nasdaq'} 強気相場（新規買い有効）`;
+  } else {
+    banner.style.background = 'rgba(247,95,95,.1)';
+    banner.style.border     = '1px solid rgba(247,95,95,.3)';
+    banner.style.color      = 'var(--negative)';
+    banner.textContent      = `📉 ${data.market === 'JP' ? '日経225' : 'Nasdaq'} 弱気相場（新規買い抑制中）`;
+  }
+
+  // 売りシグナル
+  const sellCard  = document.getElementById('sell-signal-card');
+  const sellTable = document.getElementById('sell-signal-table');
+  if (data.sell_signals && data.sell_signals.length > 0) {
+    sellCard.classList.remove('hidden');
+    sellTable.innerHTML = data.sell_signals.map(s => {
+      const pnl  = s.pnl_pct || 0;
+      const cls  = pnl >= 0 ? 'pnl-positive' : 'pnl-negative';
+      const sign = pnl >= 0 ? '+' : '';
+      const cur  = data.market === 'JP' ? '¥' : '$';
+      return `<tr>
+        <td><strong>${s.ticker}</strong><br><small style="color:var(--text-muted)">${s.label||''}</small></td>
+        <td>${cur}${(s.current_price||0).toLocaleString()}</td>
+        <td class="${cls}">${sign}${pnl.toFixed(1)}%</td>
+        <td>${s.reason||''}</td>
+        <td style="font-size:12px;color:var(--text-muted)">${s.explanation||''}</td>
+      </tr>`;
+    }).join('');
+  } else {
+    sellCard.classList.add('hidden');
+  }
+
+  // 買いシグナル
+  const buyCard  = document.getElementById('buy-signal-card');
+  const buyTable = document.getElementById('buy-signal-table');
+  if (data.buy_signals && data.buy_signals.length > 0) {
+    buyCard.classList.remove('hidden');
+    buyTable.innerHTML = data.buy_signals.map(s => {
+      const cur   = data.market === 'JP' ? '¥' : '$';
+      const price = s.details?.price || 0;
+      const posSize = 140000;
+      const shares  = price > 0 ? (posSize / price).toFixed(1) : '—';
+      return `<tr>
+        <td><strong>${s.ticker}</strong><br><small style="color:var(--text-muted)">${s.label||''}</small></td>
+        <td><span class="badge">${s.score}点</span></td>
+        <td>${cur}${price.toLocaleString('ja-JP', {maximumFractionDigits:2})}</td>
+        <td>¥140,000<br><small style="color:var(--text-muted)">${shares}株</small></td>
+        <td style="font-size:12px;color:var(--text-muted);max-width:240px">${s.explanation||''}</td>
+      </tr>`;
+    }).join('');
+  } else {
+    buyCard.classList.add('hidden');
+  }
+
+  // スコアランキング
+  const sigLabels = { buy: '📈 買い', watch: '👀 監視', none: '—' };
+  const sigColors = { buy: 'var(--positive)', watch: 'var(--warning)', none: 'var(--text-muted)' };
+  const rankTable = document.getElementById('score-ranking-table');
+  rankTable.innerHTML = (data.top_scored || []).map((s, i) => {
+    const cur = data.market === 'JP' ? '¥' : '$';
+    const sig = s.signal || 'none';
+    return `<tr>
+      <td>${i + 1}</td>
+      <td><strong>${s.ticker}</strong><br><small style="color:var(--text-muted)">${s.label||''}</small></td>
+      <td><span class="badge">${s.score}点</span></td>
+      <td class="${s.momentum_6m_pct >= 0 ? 'pnl-positive' : 'pnl-negative'}">${s.momentum_6m_pct >= 0 ? '+' : ''}${(s.momentum_6m_pct||0).toFixed(1)}%</td>
+      <td>${(s.rsi||0).toFixed(0)}</td>
+      <td style="color:${sigColors[sig]}">${sigLabels[sig]}</td>
+    </tr>`;
+  }).join('');
+}
+
+function setSignalStatus(msg, isError = false) {
+  const el = document.getElementById('signal-status');
+  el.textContent = msg;
+  el.style.color = isError ? 'var(--negative)' : 'var(--text-muted)';
+}
+
+// ─── cron ガイド ──────────────────────────────────────
+
+async function loadCronGuide() {
+  try {
+    const res  = await fetch('/api/config/signal');
+    const cfg  = await res.json();
+    const el   = document.getElementById('cron-urls');
+    const line = cfg.line_configured
+      ? '<span style="color:var(--positive)">✓ 設定済み</span>'
+      : '<span style="color:var(--negative)">✗ 未設定（Render の環境変数に LINE_NOTIFY_TOKEN を追加してください）</span>';
+
+    el.innerHTML = `
+      <p>LINE通知: ${line}</p>
+      <p style="margin-top:8px">銘柄数: 🇯🇵 ${cfg.jp_universe_count}銘柄 / 🇺🇸 ${cfg.us_universe_count}銘柄</p>
+      <hr style="border-color:var(--border);margin:12px 0">
+      <p style="font-weight:600">cron-job.org に以下のURLを登録してください:</p>
+      <p style="margin-top:8px">🇯🇵 日本株シグナル（毎日 16:30 JST）:</p>
+      <code style="display:block;background:var(--surface2);padding:8px 12px;border-radius:6px;word-break:break-all;font-size:12px;margin:4px 0 12px">${cfg.jp_signal_url}</code>
+      <p>🇺🇸 米国株シグナル（毎日 07:00 JST）:</p>
+      <code style="display:block;background:var(--surface2);padding:8px 12px;border-radius:6px;word-break:break-all;font-size:12px;margin:4px 0">${cfg.us_signal_url}</code>
+    `;
+  } catch (e) {
+    document.getElementById('cron-urls').innerHTML = '<p style="color:var(--negative)">設定の読み込みに失敗しました</p>';
+  }
+}
+
+// ─── ポートフォリオ管理 ───────────────────────────────
+
+async function loadPortfolio() {
+  try {
+    const res  = await fetch('/api/portfolio');
+    const data = await res.json();
+    renderPortfolio(data);
+  } catch (e) {
+    console.error('portfolio load error', e);
+  }
+}
+
+function renderPortfolio(data) {
+  const tbody = document.getElementById('portfolio-table');
+  if (!data.positions || data.positions.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty">保有なし（シグナルに従って手動で追加してください）</td></tr>';
+    return;
+  }
+  tbody.innerHTML = data.positions.map(p => {
+    const cur = p.market === 'JP' ? '¥' : '$';
+    return `<tr>
+      <td><strong>${p.ticker}</strong><br><small style="color:var(--text-muted)">${p.label||''}</small></td>
+      <td>${p.market === 'JP' ? '🇯🇵' : '🇺🇸'}</td>
+      <td>${p.entry_date||'—'}</td>
+      <td>${cur}${(p.entry_price||0).toLocaleString('ja-JP', {maximumFractionDigits:2})}</td>
+      <td>${p.shares||0}株</td>
+      <td>¥${(p.invested_amount||0).toLocaleString()}</td>
+      <td>
+        <button class="btn-link" onclick="removePosition('${p.ticker}')" style="color:var(--negative)">削除</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+async function addPosition() {
+  const ticker = document.getElementById('pos-ticker').value.trim().toUpperCase();
+  const price  = parseFloat(document.getElementById('pos-price').value);
+  const shares = parseFloat(document.getElementById('pos-shares').value);
+  const date   = document.getElementById('pos-date').value;
+  const market = document.getElementById('pos-market').value;
+
+  if (!ticker || !price || !shares) {
+    alert('ティッカー・取得価格・株数は必須です');
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/portfolio', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ticker, entry_price: price, shares, entry_date: date, market }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error);
+    // フォームリセット
+    ['pos-ticker','pos-price','pos-shares','pos-date'].forEach(id => {
+      document.getElementById(id).value = '';
+    });
+    await loadPortfolio();
+  } catch (e) {
+    alert(`追加エラー: ${e.message}`);
+  }
+}
+
+async function removePosition(ticker) {
+  if (!confirm(`${ticker} を保有リストから削除しますか？`)) return;
+  try {
+    const res = await fetch(`/api/portfolio/${ticker}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const e = await res.json();
+      throw new Error(e.error);
+    }
+    await loadPortfolio();
+  } catch (e) {
+    alert(`削除エラー: ${e.message}`);
+  }
 }

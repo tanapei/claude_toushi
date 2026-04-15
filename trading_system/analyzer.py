@@ -409,6 +409,80 @@ def _fallback_analysis(summary: Dict, trades: List[Dict], current_params: Dict) 
     }
 
 
+def explain_trade_signal(signal: Dict, signal_type: str, market: str = "JP") -> str:
+    """
+    売買シグナル1件について Claude が日本語の解説文を生成する。
+
+    Args:
+        signal: factor_scorer / portfolio_state が生成したシグナル辞書
+        signal_type: "buy" または "sell"
+        market: "JP" または "US"
+
+    Returns:
+        1〜3文の解説文（例: "EMAゴールデンクロスが発生し..."）
+    """
+    if not ANTHROPIC_API_KEY:
+        # APIキーなし → ルールベースで簡易説明
+        if signal_type == "sell":
+            return signal.get("reason", "売却条件に達しました")
+        reasons = signal.get("reasons", [])
+        score   = signal.get("score", 0)
+        m6      = signal.get("momentum_6m_pct", 0)
+        return f"スコア{score}点。6ヶ月リターン{m6:+.1f}%。{'; '.join(reasons[:3])}"
+
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+
+    ticker = signal.get("ticker", "")
+    from trading_system.factor_scorer import get_ticker_label
+    label  = get_ticker_label(ticker)
+
+    if signal_type == "buy":
+        details  = signal.get("details", {})
+        reasons  = signal.get("reasons", [])
+        score    = signal.get("score", 0)
+        m6       = signal.get("momentum_6m_pct", 0)
+        price    = details.get("price", 0)
+        rsi      = details.get("rsi", 0)
+        ema9     = details.get("ema9", 0)
+        ema26    = details.get("ema26", 0)
+        currency = "¥" if market == "JP" else "$"
+
+        prompt = f"""以下の買いシグナルについて、投資家向けに日本語で2文（60〜100字程度）で説明してください。
+なぜ今この銘柄を買うべきか、定量的な根拠を含めてください。
+
+銘柄: {ticker}（{label}）
+現在値: {currency}{price:,.0f}
+スコア: {score}/100点
+6ヶ月モメンタム: {m6:+.1f}%
+RSI: {rsi}
+EMA9/EMA26: {ema9:,.0f}/{ema26:,.0f}
+判定理由: {', '.join(reasons)}
+
+出力は説明文のみ（箇条書き不要、マークダウン不要）。"""
+
+    else:  # sell
+        pnl     = signal.get("pnl_pct", 0)
+        reason  = signal.get("reason", "")
+        prompt = f"""以下の売りシグナルについて、投資家向けに日本語で1〜2文（40〜80字程度）で説明してください。
+
+銘柄: {ticker}（{label}）
+売却理由: {reason}
+損益: {pnl:+.1f}%
+
+出力は説明文のみ（箇条書き不要）。"""
+
+    try:
+        response = client.messages.create(
+            model=CLAUDE_MODEL,
+            max_tokens=200,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return response.content[0].text.strip()
+    except Exception as e:
+        logger.warning(f"explain_trade_signal エラー: {e}")
+        return signal.get("reason", "") or "; ".join(signal.get("reasons", [])[:2])
+
+
 def print_analysis(analysis: Dict) -> None:
     """分析結果をコンソールに表示する。"""
     print("\n" + "=" * 60)

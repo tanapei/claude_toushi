@@ -1,15 +1,15 @@
 """
 デイリーシグナルランナー
-毎日自動実行して売買シグナルを生成し、LINE に通知する。
+毎日のシグナルを生成する。URLを開いた際に自動実行される。
 
-実行タイミング（Render cron または外部 cron-job.org 推奨）:
-  日本株: 16:30 JST（東京市場引け後）
-  米国株: 07:00 JST（NY市場引け後・翌朝）
+実行タイミング:
+  日本株: 16:30 JST以降にURLを開いた際
+  米国株: 07:00 JST以降にURLを開いた際
 """
 import logging
 import time
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 import yfinance as yf
 import pandas as pd
@@ -18,18 +18,16 @@ from trading_system.config import (
     JP_UNIVERSE, US_UNIVERSE,
     TOTAL_CAPITAL, POSITION_SIZE, MAX_POSITIONS,
     STOP_LOSS_PCT, TRAILING_STOP_PCT,
-    LINE_NOTIFY_TOKEN,
 )
 from trading_system.factor_scorer import score_universe
 from trading_system.portfolio_state import PortfolioState
-from trading_system.line_notifier import send_line_message, send_signal_notification
 
 logger = logging.getLogger(__name__)
 
 
 class SignalRunner:
     """
-    デイリーシグナル生成・通知クラス。
+    デイリーシグナル生成クラス。
 
     使い方:
         runner = SignalRunner(market="JP")
@@ -37,19 +35,13 @@ class SignalRunner:
     """
 
     def __init__(self, market: str = "JP"):
-        """
-        Args:
-            market: "JP"（日本株）または "US"（米国株）
-        """
         self.market    = market.upper()
         self.universe  = JP_UNIVERSE if self.market == "JP" else US_UNIVERSE
         self.portfolio = PortfolioState()
 
-    # ─── メインフロー ──────────────────────────────────────
-
     def run(self) -> Dict:
         """
-        シグナルを生成して LINE に通知する。
+        シグナルを生成して結果を返す。
 
         Returns:
             {
@@ -64,7 +56,6 @@ class SignalRunner:
         if not data:
             msg = f"[{self.market}] 株価データの取得に失敗しました"
             logger.error(msg)
-            send_line_message(f"\n⚠ {msg}")
             return {"error": msg}
 
         # 2. 市場レジーム確認
@@ -81,8 +72,7 @@ class SignalRunner:
         )
 
         # 5. 買いシグナル（空きスロット分）
-        n_selling      = len(sell_signals)
-        available_slots = MAX_POSITIONS - self.portfolio.count() + n_selling
+        available_slots = MAX_POSITIONS - self.portfolio.count() + len(sell_signals)
         buy_signals = [
             s for s in scored
             if s["signal"] == "buy"
@@ -92,17 +82,6 @@ class SignalRunner:
         # 6. Claude で各シグナルを説明
         buy_signals  = self._explain_signals(buy_signals,  "buy")
         sell_signals = self._explain_signals(sell_signals, "sell")
-
-        # 7. LINE 通知
-        send_signal_notification(
-            market=self.market,
-            buy_signals=buy_signals,
-            sell_signals=sell_signals,
-            market_bullish=market_bullish,
-            n_positions=self.portfolio.count(),
-            total_capital=TOTAL_CAPITAL,
-            position_size=POSITION_SIZE,
-        )
 
         result = {
             "market": self.market,
@@ -119,8 +98,6 @@ class SignalRunner:
         )
         return result
 
-    # ─── データ取得 ────────────────────────────────────────
-
     def _fetch_data(self, universe: List[str], period: str = "200d") -> Dict[str, pd.DataFrame]:
         """全銘柄の直近データを取得する（200日分）。"""
         data: Dict[str, pd.DataFrame] = {}
@@ -133,7 +110,6 @@ class SignalRunner:
                     failed.append(ticker)
                     continue
 
-                # カラム正規化
                 raw.columns = [c[0] if isinstance(c, tuple) else c for c in raw.columns]
                 df = raw[["Open", "High", "Low", "Close", "Volume"]].copy()
                 df.columns = ["open", "high", "low", "close", "volume"]
@@ -146,7 +122,7 @@ class SignalRunner:
                 else:
                     failed.append(ticker)
 
-                time.sleep(0.2)  # レート制限回避
+                time.sleep(0.2)
 
             except Exception as e:
                 logger.warning(f"[{ticker}] データ取得エラー: {e}")
@@ -158,17 +134,14 @@ class SignalRunner:
         return data
 
     def _check_market_regime(self) -> bool:
-        """
-        インデックスが200日EMAより上なら強気（True）。
-        データ取得失敗時は True を返してフィルタをバイパスする。
-        """
+        """インデックスが200日EMAより上なら強気（True）。"""
         index = "^N225" if self.market == "JP" else "^IXIC"
         try:
             raw = yf.download(index, period="250d", progress=False, auto_adjust=True)
             if raw.empty:
                 return True
-            close  = raw["Close"].squeeze()
-            ema200 = close.ewm(span=200, adjust=False).mean()
+            close   = raw["Close"].squeeze()
+            ema200  = close.ewm(span=200, adjust=False).mean()
             bullish = float(close.iloc[-1]) > float(ema200.iloc[-1])
             logger.info(f"市場レジーム ({index}): {'強気' if bullish else '弱気'}")
             return bullish
@@ -176,16 +149,13 @@ class SignalRunner:
             logger.warning(f"市場レジーム取得エラー: {e}")
             return True
 
-    # ─── Claude による説明生成 ────────────────────────────
-
     def _explain_signals(self, signals: List[Dict], signal_type: str) -> List[Dict]:
         """各シグナルに Claude の解説を付与する。"""
         from trading_system.analyzer import explain_trade_signal
         explained = []
         for s in signals:
             try:
-                explanation = explain_trade_signal(s, signal_type, self.market)
-                s["explanation"] = explanation
+                s["explanation"] = explain_trade_signal(s, signal_type, self.market)
             except Exception as e:
                 logger.warning(f"[{s.get('ticker')}] 解説生成エラー: {e}")
                 s["explanation"] = self._fallback_explanation(s, signal_type)
@@ -193,14 +163,9 @@ class SignalRunner:
         return explained
 
     def _fallback_explanation(self, signal: Dict, signal_type: str) -> str:
-        """Claude が使えない場合のルールベース解説。"""
         if signal_type == "sell":
             return signal.get("reason", "売却条件に達しました")
-
         reasons = signal.get("reasons", [])
         score   = signal.get("score", 0)
         m6      = signal.get("momentum_6m_pct", 0)
-        return (
-            f"スコア{score}点。6ヶ月リターン{m6:+.1f}%。"
-            f"{'; '.join(reasons[:3])}"
-        )
+        return f"スコア{score}点。6ヶ月リターン{m6:+.1f}%。{'; '.join(reasons[:3])}"

@@ -648,8 +648,8 @@ def _check_signal_auth() -> bool:
 @app.route("/api/run-signal", methods=["POST", "GET"])
 def run_daily_signal():
     """
-    デイリーシグナルを生成して LINE に通知する。
-    外部 cron（cron-job.org 等）から定期的に呼び出す。
+    デイリーシグナルを生成して結果を返す。
+    毎朝 URL を開いた際に呼び出される（手動または自動）。
 
     Query params:
         market: JP（デフォルト）または US
@@ -779,9 +779,8 @@ def get_signal_config():
     return jsonify({
         "jp_signal_url": jp_url,
         "us_signal_url": us_url,
-        "jp_schedule": "16:30 JST（東京市場引け後）",
-        "us_schedule": "07:00 JST（NY市場引け後）",
-        "line_configured": bool(__import__("trading_system.config", fromlist=["LINE_NOTIFY_TOKEN"]).LINE_NOTIFY_TOKEN),
+        "jp_schedule": "東京市場引け後（16:30 JST）に確認推奨",
+        "us_schedule": "NY市場引け後（翌朝 07:00 JST）に確認推奨",
         "total_capital": TOTAL_CAPITAL,
         "position_size": POSITION_SIZE,
         "jp_universe_count": len(JP_UNIVERSE),

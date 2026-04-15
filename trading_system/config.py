@@ -40,11 +40,6 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 CLAUDE_MODEL = "claude-opus-4-6"
 
 # =============================================
-# LINE Notify 設定
-# =============================================
-LINE_NOTIFY_TOKEN = os.getenv("LINE_NOTIFY_TOKEN", "")
-
-# =============================================
 # シグナル配信 API キー（外部 cron からの不正呼び出し防止）
 # =============================================
 SIGNAL_API_KEY = os.getenv("SIGNAL_API_KEY", "")

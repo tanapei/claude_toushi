@@ -17,8 +17,14 @@ document.addEventListener('DOMContentLoaded', () => {
   initRunForm();
   loadDefaults();
   loadDashboard();
-  loadCronGuide();
   loadPortfolio();
+
+  // シグナルタブを開いたら自動で最新シグナルを取得・生成
+  document.querySelectorAll('.tab').forEach(btn => {
+    if (btn.dataset.tab === 'signal') {
+      btn.addEventListener('click', () => autoLoadSignal());
+    }
+  });
 
   // 30秒ごとにダッシュボードを自動更新
   setInterval(() => {
@@ -810,6 +816,7 @@ async function runSignal() {
     const res = await fetch(`/api/run-signal?market=${market}`, { method: 'POST' });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || res.statusText);
+    _latestSignalTs[market] = Date.now();
     setSignalStatus(`完了: 買い${data.buy_count}件 / 売り${data.sell_count}件`);
     await loadSignal();
   } catch (e) {
@@ -923,31 +930,26 @@ function setSignalStatus(msg, isError = false) {
   el.style.color = isError ? 'var(--negative)' : 'var(--text-muted)';
 }
 
-// ─── cron ガイド ──────────────────────────────────────
+// ─── シグナル自動ロード ────────────────────────────────
 
-async function loadCronGuide() {
-  try {
-    const res  = await fetch('/api/config/signal');
-    const cfg  = await res.json();
-    const el   = document.getElementById('cron-urls');
-    const line = cfg.line_configured
-      ? '<span style="color:var(--positive)">✓ 設定済み</span>'
-      : '<span style="color:var(--negative)">✗ 未設定（Render の環境変数に LINE_NOTIFY_TOKEN を追加してください）</span>';
+let _signalAutoLoaded = { JP: false, US: false };
 
-    el.innerHTML = `
-      <p>LINE通知: ${line}</p>
-      <p style="margin-top:8px">銘柄数: 🇯🇵 ${cfg.jp_universe_count}銘柄 / 🇺🇸 ${cfg.us_universe_count}銘柄</p>
-      <hr style="border-color:var(--border);margin:12px 0">
-      <p style="font-weight:600">cron-job.org に以下のURLを登録してください:</p>
-      <p style="margin-top:8px">🇯🇵 日本株シグナル（毎日 16:30 JST）:</p>
-      <code style="display:block;background:var(--surface2);padding:8px 12px;border-radius:6px;word-break:break-all;font-size:12px;margin:4px 0 12px">${cfg.jp_signal_url}</code>
-      <p>🇺🇸 米国株シグナル（毎日 07:00 JST）:</p>
-      <code style="display:block;background:var(--surface2);padding:8px 12px;border-radius:6px;word-break:break-all;font-size:12px;margin:4px 0">${cfg.us_signal_url}</code>
-    `;
-  } catch (e) {
-    document.getElementById('cron-urls').innerHTML = '<p style="color:var(--negative)">設定の読み込みに失敗しました</p>';
+async function autoLoadSignal() {
+  const market = document.getElementById('signal-market').value;
+  // 既にロード済みで6時間以内なら再取得しない
+  const cached = _latestSignalTs[market];
+  if (cached) {
+    const ageHours = (Date.now() - cached) / 3_600_000;
+    if (ageHours < 6) {
+      await loadSignal();  // キャッシュ表示のみ
+      return;
+    }
   }
+  // 初回またはデータが古い → 自動生成
+  await runSignal();
 }
+
+const _latestSignalTs = {};
 
 // ─── ポートフォリオ管理 ───────────────────────────────
 

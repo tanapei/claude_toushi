@@ -48,9 +48,10 @@ function switchTab(name) {
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === `panel-${name}`));
 
-  if (name === 'dashboard') loadDashboard();
-  if (name === 'trades')    populateSessionSelects();
-  if (name === 'analysis')  populateSessionSelects();
+  if (name === 'dashboard')   loadDashboard();
+  if (name === 'trades')      populateSessionSelects();
+  if (name === 'analysis')    populateSessionSelects();
+  if (name === 'autotrader')  loadAutoTraderData();
 }
 
 // ─── デフォルト設定の読み込み ─────────────────
@@ -1041,5 +1042,179 @@ async function removeVirtualPosition(ticker) {
     await loadVirtualPortfolio();
   } catch (e) {
     alert(`削除エラー: ${e.message}`);
+  }
+}
+
+// =============================================
+//  自動トレード タブ
+// =============================================
+
+async function loadAutoTraderData() {
+  await Promise.all([
+    loadRealTradesSummary(),
+    loadRealPositions(),
+    loadRealTrades(),
+    loadTradeDiary(),
+  ]);
+}
+
+async function loadRealTradesSummary() {
+  try {
+    const res  = await fetch('/api/real-trades/summary');
+    const data = await res.json();
+    if (data.error) return;
+
+    const pnl    = data.total_pnl || 0;
+    const pnlPct = data.avg_pnl_pct || 0;
+    const pnlCls = pnl >= 0 ? 'positive' : 'negative';
+    const sign   = pnl >= 0 ? '+' : '';
+
+    document.getElementById('at-kpi-total').textContent    = `${data.total_trades}件`;
+    document.getElementById('at-kpi-winrate').textContent  = `${data.win_rate}%`;
+    document.getElementById('at-kpi-pnl').innerHTML        =
+      `<span class="${pnlCls}">${sign}¥${Math.abs(pnl).toLocaleString()}</span>`;
+    document.getElementById('at-kpi-avg-pnl').innerHTML    =
+      `<span class="${pnlPct >= 0 ? 'positive' : 'negative'}">${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%</span>`;
+    document.getElementById('at-kpi-pf').textContent       = data.profit_factor.toFixed(2);
+    document.getElementById('at-kpi-hold').textContent     = `${data.avg_hold_days}日`;
+
+    if (data.total_trades > 0) {
+      const stats = document.getElementById('at-trade-stats');
+      stats.style.display = 'flex';
+      document.getElementById('at-wins').textContent   = `${data.wins}件`;
+      document.getElementById('at-losses').textContent = `${data.losses}件`;
+      document.getElementById('at-best').textContent   = `+${data.best_trade_pct}%`;
+      document.getElementById('at-worst').textContent  = `${data.worst_trade_pct}%`;
+    }
+  } catch (e) {
+    console.warn('実取引サマリー取得失敗:', e);
+  }
+}
+
+async function loadRealPositions() {
+  try {
+    const res  = await fetch('/api/portfolio');
+    const data = await res.json();
+    const tbody = document.getElementById('at-positions-table');
+
+    if (!data.positions || data.positions.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" class="empty">保有なし（自動取引稼働後に表示されます）</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = data.positions.map(p => {
+      const cur = p.market === 'JP' ? '¥' : '$';
+      return `<tr>
+        <td><strong>${escHtml(p.ticker)}</strong><br>
+            <small style="color:var(--text-muted)">${escHtml(p.label||'')}</small></td>
+        <td>${p.market === 'JP' ? '🇯🇵' : '🇺🇸'}</td>
+        <td>${p.entry_date || '—'}</td>
+        <td>${cur}${(p.entry_price||0).toLocaleString('ja-JP', {maximumFractionDigits:2})}</td>
+        <td>${p.shares||0}株</td>
+        <td>¥${(p.invested_amount||0).toLocaleString()}</td>
+      </tr>`;
+    }).join('');
+  } catch (e) {
+    console.warn('実ポジション取得失敗:', e);
+  }
+}
+
+async function loadRealTrades() {
+  try {
+    const res    = await fetch('/api/real-trades');
+    const trades = await res.json();
+    const tbody  = document.getElementById('at-trades-table');
+
+    if (!Array.isArray(trades) || trades.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="10" class="empty">実取引なし（自動取引稼働後に表示されます）</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = trades.map(t => {
+      const pnlPct = t.pnl_pct || 0;
+      const pnl    = t.pnl || 0;
+      const cls    = pnlPct >= 0 ? 'pnl-positive' : 'pnl-negative';
+      const sign   = pnlPct >= 0 ? '+' : '';
+      const diaryId = `${t.ticker}_${(t.exit_date||'').replace(/-/g,'')||''}`;
+      return `<tr>
+        <td><strong>${escHtml(t.ticker)}</strong><br>
+            <small style="color:var(--text-muted)">${escHtml(t.label||'')}</small></td>
+        <td>${t.entry_date||'—'}</td>
+        <td>${t.exit_date||t.logged_at?.slice(0,10)||'—'}</td>
+        <td>¥${(t.entry_price||0).toLocaleString()}</td>
+        <td>¥${(t.exit_price||0).toLocaleString()}</td>
+        <td>${t.shares||0}株</td>
+        <td class="${cls}">${sign}¥${Math.abs(pnl).toLocaleString()}</td>
+        <td class="${cls}">${sign}${pnlPct.toFixed(2)}%</td>
+        <td style="font-size:11px;color:var(--text-muted)">${escHtml(t.exit_reason||'')}</td>
+        <td>
+          <button class="btn-link" style="font-size:11px"
+            onclick="scrollToDiaryEntry('${escHtml(diaryId)}')">日記▼</button>
+        </td>
+      </tr>`;
+    }).join('');
+  } catch (e) {
+    console.warn('実取引履歴取得失敗:', e);
+  }
+}
+
+async function loadTradeDiary() {
+  try {
+    const res     = await fetch('/api/trade-diary');
+    const entries = await res.json();
+    const container = document.getElementById('at-diary-list');
+
+    if (!Array.isArray(entries) || entries.length === 0) {
+      container.innerHTML =
+        '<div class="empty" style="padding:20px;text-align:center">日記なし（実取引完了後に自動生成されます）</div>';
+      return;
+    }
+
+    container.innerHTML = entries.map(e => {
+      const a      = e.analysis || {};
+      const pnlPct = e.pnl_pct || 0;
+      const cls    = pnlPct >= 0 ? 'positive' : 'negative';
+      const sign   = pnlPct >= 0 ? '+' : '';
+      const icon   = pnlPct >= 0 ? '✅' : '❌';
+
+      return `<div class="diary-entry" id="diary-${escHtml(e.trade_id||'')}">
+        <div class="diary-header">
+          <span class="diary-ticker">${icon} <strong>${escHtml(e.ticker)}</strong>
+            <span style="color:var(--text-muted);font-size:12px">${escHtml(e.label||'')}</span>
+          </span>
+          <span class="diary-meta">
+            ${e.entry_date||'?'} → ${e.exit_date||'?'}
+            &nbsp;|&nbsp;
+            <span class="${cls}">${sign}${pnlPct.toFixed(2)}%</span>
+            &nbsp;/&nbsp;
+            <span class="${cls}">${sign}¥${Math.abs(e.pnl||0).toLocaleString()}</span>
+          </span>
+        </div>
+        ${a.summary ? `<div class="diary-summary">${escHtml(a.summary)}</div>` : ''}
+        <div class="diary-body">
+          ${a.win_loss_reason ? `<div class="diary-section"><span class="diary-label">📊 原因</span><span>${escHtml(a.win_loss_reason)}</span></div>` : ''}
+          ${a.what_went_well  ? `<div class="diary-section"><span class="diary-label">✓ 良かった点</span><span>${escHtml(a.what_went_well)}</span></div>` : ''}
+          ${a.what_went_wrong ? `<div class="diary-section"><span class="diary-label">✗ 反省点</span><span style="color:var(--negative)">${escHtml(a.what_went_wrong)}</span></div>` : ''}
+          ${a.lesson          ? `<div class="diary-section"><span class="diary-label">💡 教訓</span><strong>${escHtml(a.lesson)}</strong></div>` : ''}
+          ${a.next_action     ? `<div class="diary-section"><span class="diary-label">→ 次のアクション</span><span>${escHtml(a.next_action)}</span></div>` : ''}
+        </div>
+        <div class="diary-footer">
+          売却理由: ${escHtml(e.exit_reason||'—')} &nbsp;|&nbsp; 記録: ${(e.created_at||'').slice(0,16).replace('T',' ')}
+        </div>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    console.warn('日記取得失敗:', e);
+  }
+}
+
+function scrollToDiaryEntry(tradeId) {
+  const el = document.getElementById(`diary-${tradeId}`);
+  if (el) {
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el.style.outline = '2px solid var(--positive)';
+    setTimeout(() => { el.style.outline = ''; }, 2000);
+  } else {
+    document.getElementById('at-diary-card')?.scrollIntoView({ behavior: 'smooth' });
   }
 }

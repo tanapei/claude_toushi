@@ -19,7 +19,16 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-BUY_THRESHOLD = 70  # 買いシグナル閾値（70点以上）
+BUY_THRESHOLD = 70  # デフォルト閾値（scoring_config.json で上書き可能）
+
+
+def _load_scoring_cfg() -> Dict:
+    """auto_improver が書き出した scoring_config.json を読み込む。"""
+    try:
+        from trading_system.auto_improver import load_scoring_config
+        return load_scoring_config()
+    except Exception:
+        return {"buy_threshold": BUY_THRESHOLD, "rsi_lower": 30, "rsi_upper": 75}
 
 
 # ─── 指標計算ユーティリティ ────────────────────────────
@@ -120,13 +129,16 @@ def score_stock(
         else:
             reasons.append("出来高は平均以下")
 
-    # ⑤ RSI（15点）: 40〜70 の適正範囲
+    # ⑤ RSI（15点）: scoring_config で設定された適正範囲
+    cfg = _load_scoring_cfg()
+    rsi_lower = cfg.get("rsi_lower", 30)
+    rsi_upper = cfg.get("rsi_upper", 75)
     rsi_val = float(_rsi(close, 14).iloc[-1])
     details["rsi"] = round(rsi_val, 1)
-    if 40 <= rsi_val <= 70:
+    if rsi_lower <= rsi_val <= rsi_upper:
         score += 15
         reasons.append(f"RSI適正（{rsi_val:.0f}）")
-    elif rsi_val > 70:
+    elif rsi_val > rsi_upper:
         reasons.append(f"RSI過熱（{rsi_val:.0f}）")
     else:
         reasons.append(f"RSI低水準（{rsi_val:.0f}）")
@@ -163,13 +175,16 @@ def score_universe(
     else:
         rank_map = {t: 0.5 for t in data}
 
+    cfg       = _load_scoring_cfg()
+    threshold = int(cfg.get("buy_threshold", BUY_THRESHOLD))
+
     results = []
     for ticker, df in data.items():
         rank_pct = rank_map.get(ticker, 0.5)
         score, reasons, details = score_stock(df, rank_pct)
 
         # 市場レジームが弱気なら買いシグナルを抑制
-        if score >= BUY_THRESHOLD and market_bullish:
+        if score >= threshold and market_bullish:
             signal = "buy"
         elif score >= BUY_THRESHOLD:
             signal = "watch"  # 条件は満たすが市場が弱気

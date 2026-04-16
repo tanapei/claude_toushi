@@ -41,6 +41,15 @@ CLAUDE_MODEL = "claude-opus-4-6"
 
 
 # =============================================
+# kabuステーション® API 設定
+# =============================================
+KABU_API_BASE_URL   = "http://localhost:18080/kabusapi"
+KABU_API_PASSWORD   = os.getenv("KABU_API_PASSWORD", "")    # kabuステーション® APIパスワード
+KABU_TRADE_PASSWORD = os.getenv("KABU_TRADE_PASSWORD", "")  # 取引パスワード
+KABU_EXCHANGE_CODE  = 1  # 1=東証
+
+
+# =============================================
 # ポートフォリオ設定（実運用）
 # =============================================
 TOTAL_CAPITAL    = 700_000   # 運用総額 70万円

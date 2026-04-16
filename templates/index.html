@@ -22,11 +22,12 @@
       <span class="logo-text">Claude 株式取引シミュレーター</span>
     </div>
     <nav class="tabs" role="tablist">
-      <button class="tab active" data-tab="dashboard" role="tab">ダッシュボード</button>
-      <button class="tab" data-tab="signal"    role="tab">📱 シグナル</button>
-      <button class="tab" data-tab="run"       role="tab">バックテスト実行</button>
-      <button class="tab" data-tab="trades"    role="tab">取引履歴</button>
-      <button class="tab" data-tab="analysis"  role="tab">AI 分析</button>
+      <button class="tab active" data-tab="dashboard"   role="tab">ダッシュボード</button>
+      <button class="tab" data-tab="signal"       role="tab">📱 シグナル</button>
+      <button class="tab" data-tab="autotrader"   role="tab">🤖 自動トレード</button>
+      <button class="tab" data-tab="run"          role="tab">バックテスト実行</button>
+      <button class="tab" data-tab="trades"       role="tab">取引履歴</button>
+      <button class="tab" data-tab="analysis"     role="tab">AI 分析</button>
     </nav>
   </div>
 </header>
@@ -396,6 +397,109 @@
             <tr><td colspan="10" class="empty">セッションを選択してください</td></tr>
           </tbody>
         </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── 自動トレード タブ ─── -->
+  <section class="tab-panel" id="panel-autotrader">
+    <div class="section-title">🤖 自動トレード ダッシュボード</div>
+
+    <!-- パフォーマンス KPI -->
+    <div class="kpi-grid" id="at-kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-label">総取引数</div>
+        <div class="kpi-value" id="at-kpi-total">—</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">勝率</div>
+        <div class="kpi-value" id="at-kpi-winrate">—</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">合計損益</div>
+        <div class="kpi-value" id="at-kpi-pnl">—</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">平均損益率</div>
+        <div class="kpi-value" id="at-kpi-avg-pnl">—</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">プロフィットファクター</div>
+        <div class="kpi-value" id="at-kpi-pf">—</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">平均保有日数</div>
+        <div class="kpi-value" id="at-kpi-hold">—</div>
+      </div>
+    </div>
+
+    <!-- 現在の保有ポジション（実取引） -->
+    <div class="card mt-20">
+      <div class="card-header">
+        💼 現在の保有ポジション（実取引）
+        <button class="btn-secondary" onclick="loadAutoTraderData()" style="font-size:12px;padding:4px 12px">更新</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th>銘柄</th><th>市場</th><th>取得日</th><th>取得価格</th><th>株数</th><th>投資額</th>
+          </tr></thead>
+          <tbody id="at-positions-table">
+            <tr><td colspan="6" class="empty">保有なし（自動取引稼働後に表示されます）</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 実取引履歴テーブル -->
+    <div class="card mt-20">
+      <div class="card-header">📋 実取引履歴</div>
+
+      <!-- ミニ統計 -->
+      <div class="trade-stats" id="at-trade-stats" style="display:none">
+        <div class="ts-item positive"><span class="ts-label">勝ち</span><span class="ts-val" id="at-wins">—</span></div>
+        <div class="ts-item negative"><span class="ts-label">負け</span><span class="ts-val" id="at-losses">—</span></div>
+        <div class="ts-item"><span class="ts-label">最良取引</span><span class="ts-val positive" id="at-best">—</span></div>
+        <div class="ts-item"><span class="ts-label">最悪取引</span><span class="ts-val negative" id="at-worst">—</span></div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th>銘柄</th><th>取得日</th><th>売却日</th><th>取得価格</th><th>売却価格</th>
+            <th>株数</th><th>損益(円)</th><th>損益率</th><th>売却理由</th><th>日記</th>
+          </tr></thead>
+          <tbody id="at-trades-table">
+            <tr><td colspan="10" class="empty">実取引なし（自動取引稼働後に表示されます）</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- トレード日記 -->
+    <div class="card mt-20" id="at-diary-card">
+      <div class="card-header">📔 トレード日記（Claude 分析）</div>
+      <p style="font-size:12px;color:var(--text-muted);margin:0 0 12px">
+        売却のたびに Claude がトレードを分析し、勝敗の原因と教訓を記録します。
+        日記は次回の取引改善に自動で活用されます。
+      </p>
+      <div id="at-diary-list">
+        <div class="empty" style="padding:20px;text-align:center">日記なし（実取引完了後に自動生成されます）</div>
+      </div>
+    </div>
+
+    <!-- セットアップガイド -->
+    <div class="card mt-20">
+      <div class="card-header">⚙️ 自動取引 セットアップガイド</div>
+      <div style="font-size:13px;line-height:2.4;color:var(--text-muted)">
+        <p><strong style="color:var(--text)">①</strong> kabuステーション® を起動・ログイン済みにする</p>
+        <p><strong style="color:var(--text)">②</strong> <code>.env</code> に <code>KABU_API_PASSWORD</code> と <code>KABU_TRADE_PASSWORD</code> を設定</p>
+        <p><strong style="color:var(--text)">③</strong> PC上で <code>python local_trader.py</code> を実行</p>
+        <p><strong style="color:var(--text)">④</strong> 平日 09:00 JST に自動で銘柄選定・発注が始まります</p>
+        <p style="margin-top:8px;font-size:12px">
+          ※ 損切り: -5% / 利確: +15% / トレーリングストップ: 高値から-6%<br>
+          ※ 引け後 15:30 に Claude が実績を分析してスコアリングを自動改善します
+        </p>
       </div>
     </div>
   </section>

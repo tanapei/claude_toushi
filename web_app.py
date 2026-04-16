@@ -700,6 +700,109 @@ def delete_virtual_portfolio_position(ticker: str):
         return jsonify({"error": str(e)}), 500
 
 
+# ─────────────────────────────────────────────
+# 実取引履歴 API（local_trader が記録した real_trades.json を返す）
+# ─────────────────────────────────────────────
+
+@app.route("/api/real-trades")
+def get_real_trades():
+    """実取引履歴を返す（新しい順）。"""
+    try:
+        from trading_system.auto_improver import _load_real_trades
+        trades = _load_real_trades()
+        trades_sorted = sorted(trades, key=lambda t: t.get("logged_at", ""), reverse=True)
+        return jsonify(trades_sorted)
+    except Exception as e:
+        logger.exception("実取引履歴取得エラー")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/real-trades/summary")
+def get_real_trades_summary():
+    """実取引のパフォーマンスサマリーを返す。"""
+    try:
+        from trading_system.auto_improver import _load_real_trades
+        trades = _load_real_trades()
+        if not trades:
+            return jsonify({
+                "total_trades": 0,
+                "wins": 0,
+                "losses": 0,
+                "win_rate": 0,
+                "total_pnl": 0,
+                "avg_pnl_pct": 0,
+                "best_trade_pct": 0,
+                "worst_trade_pct": 0,
+                "avg_hold_days": 0,
+                "profit_factor": 0,
+            })
+
+        wins   = [t for t in trades if t.get("pnl_pct", 0) > 0]
+        losses = [t for t in trades if t.get("pnl_pct", 0) <= 0]
+        total_pnl  = sum(t.get("pnl", 0) for t in trades)
+        avg_pnl    = sum(t.get("pnl_pct", 0) for t in trades) / len(trades)
+        win_pnl    = sum(t.get("pnl", 0) for t in wins)
+        loss_pnl   = abs(sum(t.get("pnl", 0) for t in losses)) or 1
+
+        # 平均保有日数（entry_date / exit_date がある場合）
+        hold_days_list = []
+        for t in trades:
+            try:
+                from datetime import date
+                ed = date.fromisoformat(t["entry_date"])
+                xd = date.fromisoformat(t.get("exit_date", t.get("logged_at", "")[:10]))
+                hold_days_list.append((xd - ed).days)
+            except Exception:
+                pass
+        avg_hold = sum(hold_days_list) / len(hold_days_list) if hold_days_list else 0
+
+        return jsonify({
+            "total_trades":    len(trades),
+            "wins":            len(wins),
+            "losses":          len(losses),
+            "win_rate":        round(len(wins) / len(trades) * 100, 1),
+            "total_pnl":       round(total_pnl),
+            "avg_pnl_pct":     round(avg_pnl, 2),
+            "best_trade_pct":  round(max(t.get("pnl_pct", 0) for t in trades), 2),
+            "worst_trade_pct": round(min(t.get("pnl_pct", 0) for t in trades), 2),
+            "avg_hold_days":   round(avg_hold, 1),
+            "profit_factor":   round(win_pnl / loss_pnl, 2),
+        })
+    except Exception as e:
+        logger.exception("実取引サマリー取得エラー")
+        return jsonify({"error": str(e)}), 500
+
+
+# ─────────────────────────────────────────────
+# トレード日記 API
+# ─────────────────────────────────────────────
+
+@app.route("/api/trade-diary")
+def get_trade_diary():
+    """全日記エントリを返す（新しい順）。"""
+    try:
+        from trading_system.trade_diary import get_diary
+        return jsonify(get_diary())
+    except Exception as e:
+        logger.exception("日記取得エラー")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/trade-diary/<trade_id>")
+def get_trade_diary_entry(trade_id: str):
+    """特定のトレード日記エントリを返す。"""
+    try:
+        from trading_system.trade_diary import get_diary
+        entries = get_diary()
+        entry = next((e for e in entries if e.get("trade_id") == trade_id), None)
+        if not entry:
+            return jsonify({"error": "Not found"}), 404
+        return jsonify(entry)
+    except Exception as e:
+        logger.exception("日記エントリ取得エラー")
+        return jsonify({"error": str(e)}), 500
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     print(f"\n株式取引シミュレーション UI 起動中...")

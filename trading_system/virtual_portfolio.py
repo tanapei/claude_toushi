@@ -183,9 +183,13 @@ class VirtualPortfolio:
         for ticker in tickers:
             try:
                 raw = yf.download(ticker, period="5d", progress=False, auto_adjust=True)
-                if not raw.empty:
-                    close = raw["Close"].squeeze()
-                    prices[ticker] = float(close.iloc[-1])
+                if raw.empty:
+                    continue
+                # yfinance ≥ 0.2 はシングルティッカーでも MultiIndex を返す場合がある
+                if hasattr(raw.columns, "levels"):
+                    raw.columns = [c[0] if isinstance(c, tuple) else c for c in raw.columns]
+                close = raw["Close"].squeeze()
+                prices[ticker] = float(close.iloc[-1])
                 time.sleep(0.2)
             except Exception as e:
                 logger.warning(f"[{ticker}] 現在値取得エラー: {e}")

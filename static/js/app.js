@@ -853,29 +853,80 @@ async function removePosition(ticker) {
 // 仮保有中のティッカーセット（ボタン表示制御用）
 let _virtualTickers = new Set();
 
-/** ページ初期化時に仮保有リストだけ高速取得（価格取得なし） */
+/**
+ * ページ初期化・仮登録直後に呼ぶ。
+ * 価格取得なしで高速にテーブルを表示する。
+ */
 async function loadVirtualPortfolioList() {
   try {
     const res  = await fetch('/api/virtual-portfolio/list');
     const data = await res.json();
-    _virtualTickers = new Set((data.positions || []).map(p => p.ticker));
+    const positions = data.positions || [];
+    _virtualTickers = new Set(positions.map(p => p.ticker));
+    renderVirtualPortfolioFromList(positions);
   } catch (e) {
     console.warn('仮保有リスト取得失敗:', e);
   }
 }
 
-/** 現在値を取得して損益付きで表示する（更新ボタン押下時） */
+/** 価格なしで一覧を描画する（登録直後の即時表示用） */
+function renderVirtualPortfolioFromList(positions) {
+  const tbody   = document.getElementById('virtual-portfolio-table');
+  const summary = document.getElementById('virtual-portfolio-summary');
+
+  if (!positions.length) {
+    tbody.innerHTML = '<tr><td colspan="9" class="empty">仮保有なし（買いシグナルで「仮登録」してください）</td></tr>';
+    summary.classList.add('hidden');
+    return;
+  }
+
+  tbody.innerHTML = positions.map(p => {
+    const cur      = p.market === 'JP' ? '¥' : '$';
+    const holdDays = Math.max(0, Math.floor(
+      (Date.now() - new Date(p.entry_date || Date.now()).getTime()) / 86400000
+    ));
+    return `<tr>
+      <td><strong>${escHtml(p.ticker)}</strong><br>
+          <small style="color:var(--text-muted)">${escHtml(p.label||'')}</small></td>
+      <td>${p.signal_score > 0 ? `<span class="badge">${p.signal_score}点</span>` : '—'}</td>
+      <td>${p.entry_date || '—'}</td>
+      <td>${cur}${(p.entry_price||0).toLocaleString('ja-JP', {maximumFractionDigits:2})}</td>
+      <td style="color:var(--text-muted);font-size:11px">「現在値を更新」で取得</td>
+      <td>—</td>
+      <td>—</td>
+      <td>${holdDays}日</td>
+      <td><button class="btn-link" onclick="removeVirtualPosition('${escHtml(p.ticker)}')"
+              style="color:var(--negative)">削除</button></td>
+    </tr>`;
+  }).join('');
+
+  summary.classList.add('hidden');
+}
+
+/** 現在値を取得して損益付きで表示する（「現在値を更新」ボタン押下時） */
 async function loadVirtualPortfolio() {
   const tbody = document.getElementById('virtual-portfolio-table');
   tbody.innerHTML = '<tr><td colspan="9" class="empty" style="color:var(--text-muted)">現在値を取得中... しばらくお待ちください</td></tr>';
 
   try {
     const res  = await fetch('/api/virtual-portfolio');
-    const data = await res.json();
+    // サーバーがHTMLを返した場合も安全に処理する
+    const text = await res.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      tbody.innerHTML = '<tr><td colspan="9" class="empty">サーバーエラー。サーバーログを確認してください。</td></tr>';
+      return;
+    }
+    if (!res.ok) {
+      tbody.innerHTML = `<tr><td colspan="9" class="empty">エラー: ${escHtml(data.error || '不明なエラー')}</td></tr>`;
+      return;
+    }
     _virtualTickers = new Set((data.positions || []).map(p => p.ticker));
     renderVirtualPortfolio(data);
   } catch (e) {
-    tbody.innerHTML = `<tr><td colspan="9" class="empty">読み込みエラー: ${e.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9" class="empty">読み込みエラー: ${escHtml(e.message)}</td></tr>`;
   }
 }
 
@@ -968,8 +1019,11 @@ async function addVirtualPosition(ticker, price, label, market, score) {
     if (btn) {
       btn.outerHTML = `<span style="font-size:11px;color:var(--positive)">✓ 仮登録済</span>`;
     }
-    // 仮保有テーブルを高速リストで更新（価格取得なし）
+    // 仮保有テーブルを即時表示（価格取得なし）
     await loadVirtualPortfolioList();
+    // シグナルタブが見えていれば仮保有カードへスクロール
+    const vpSection = document.getElementById('virtual-portfolio-table');
+    if (vpSection) vpSection.closest('.card')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   } catch (e) {
     alert(`仮登録エラー: ${e.message}`);
   }

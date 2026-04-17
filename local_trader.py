@@ -150,6 +150,11 @@ def morning_routine():
 
     except Exception as e:
         logger.exception(f"朝の処理で予期しないエラー: {e}")
+        try:
+            from trading_system.notifier import notify_error
+            notify_error("朝の自動発注処理", str(e))
+        except Exception:
+            pass
 
     logger.info("朝の自動発注処理 完了")
 

@@ -174,18 +174,26 @@ class OrderExecutor:
             )
 
         invested = entry_price * actual_qty
+        label    = signal.get("label", "")
         self.portfolio.add_position(
             ticker=ticker,
             entry_price=entry_price,
             shares=actual_qty,
             market="JP",
-            label=signal.get("label", ""),
+            label=label,
             invested_amount=int(invested),
         )
         logger.info(
             f"[{ticker}] ポートフォリオ記録: {actual_qty}株 @ ¥{entry_price:,.0f}"
             f" = ¥{invested:,.0f}（{'約定確認済' if fill['filled'] else '約定未確認'}）"
         )
+
+        # LINE 通知
+        try:
+            from trading_system.notifier import notify_buy
+            notify_buy(ticker, label, actual_qty, entry_price, int(invested), fill["filled"])
+        except Exception:
+            pass
 
         return {
             "ticker":        ticker,
@@ -241,10 +249,11 @@ class OrderExecutor:
         )
 
         from datetime import date as _date
+        label = pos.get("label", "")
         self.portfolio.remove_position(ticker)
         _log_real_trade({
             "ticker":      ticker,
-            "label":       pos.get("label", ""),
+            "label":       label,
             "entry_price": pos["entry_price"],
             "exit_price":  exit_price,
             "shares":      qty,
@@ -254,6 +263,18 @@ class OrderExecutor:
             "exit_date":   _date.today().isoformat(),
             "exit_reason": reason,
         })
+
+        # LINE 通知（損切りトリガーかシグナル売りかで呼び分け）
+        try:
+            from trading_system.notifier import notify_sell, notify_stop
+            is_stop = any(k in reason for k in ("損切り", "トレーリング", "利確"))
+            if is_stop:
+                notify_stop(ticker, label, round(pnl_pct, 2), reason)
+            else:
+                notify_sell(ticker, label, qty, exit_price,
+                            round(pnl), round(pnl_pct, 2), reason, fill["filled"])
+        except Exception:
+            pass
 
         return {
             "ticker":        ticker,

@@ -138,11 +138,21 @@ def run_improvement_cycle():
     else:
         new_cfg = _rule_based_improve(current_cfg, win_rate, avg_pnl)
 
-    if new_cfg:
+    changed = new_cfg is not None
+    if changed:
         new_cfg["updated_at"] = datetime.now().isoformat()
         _save_scoring_config(new_cfg)
+        update_reason = new_cfg.get("update_reason", "")
     else:
         logger.info("パラメータ変更なし（現状維持）")
+        update_reason = "変更なし"
+
+    # LINE 通知
+    try:
+        from trading_system.notifier import notify_improvement
+        notify_improvement(win_rate, avg_pnl, update_reason, changed)
+    except Exception:
+        pass
 
 
 def _claude_improve(

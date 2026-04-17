@@ -1218,3 +1218,135 @@ function scrollToDiaryEntry(tradeId) {
     document.getElementById('at-diary-card')?.scrollIntoView({ behavior: 'smooth' });
   }
 }
+
+// ─── 累積損益チャート ─────────────────────────────────────────
+
+let _atEquityChart = null;
+
+async function loadEquityChart() {
+  try {
+    const res  = await fetch('/api/real-trades/equity');
+    const data = await res.json();
+    if (!data.labels || data.labels.length === 0) return;
+
+    const card = document.getElementById('at-equity-card');
+    card.style.display = '';
+
+    const ctx = document.getElementById('at-equity-chart').getContext('2d');
+    if (_atEquityChart) _atEquityChart.destroy();
+
+    const pnls = data.cumulative_pnl || [];
+    const colors = pnls.map(v => v >= 0 ? 'rgba(62,207,142,0.8)' : 'rgba(247,95,95,0.8)');
+
+    _atEquityChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: data.labels,
+        datasets: [{
+          label: '累積損益（円）',
+          data: pnls,
+          borderColor: 'rgba(62,207,142,1)',
+          backgroundColor: 'rgba(62,207,142,0.1)',
+          borderWidth: 2,
+          pointBackgroundColor: colors,
+          pointRadius: 5,
+          fill: true,
+          tension: 0.3,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: ctx => {
+                const v = ctx.parsed.y;
+                return ` ${v >= 0 ? '+' : ''}¥${Math.abs(v).toLocaleString()}`;
+              },
+            },
+          },
+        },
+        scales: {
+          x: { ticks: { color: '#8b9cb3', font: { size: 11 } }, grid: { color: 'rgba(255,255,255,.05)' } },
+          y: {
+            ticks: {
+              color: '#8b9cb3',
+              callback: v => `¥${(v/10000).toFixed(0)}万`,
+            },
+            grid: { color: 'rgba(255,255,255,.05)' },
+          },
+        },
+      },
+    });
+  } catch (e) {
+    console.warn('累積損益チャート取得失敗:', e);
+  }
+}
+
+// ─── 一時停止 / 再開 ──────────────────────────────────────────
+
+async function loadTraderStatus() {
+  try {
+    const res  = await fetch('/api/trader/status');
+    const data = await res.json();
+    _applyTraderStatus(data.paused);
+  } catch (e) {
+    console.warn('トレーダー状態取得失敗:', e);
+  }
+}
+
+function _applyTraderStatus(paused) {
+  const dot    = document.getElementById('at-status-dot');
+  const label  = document.getElementById('at-status-label');
+  const pause  = document.getElementById('at-pause-btn');
+  const resume = document.getElementById('at-resume-btn');
+
+  if (paused) {
+    dot.style.background   = 'var(--warning, #f5a623)';
+    label.textContent      = '⏸ 一時停止中';
+    label.style.color      = 'var(--warning, #f5a623)';
+    pause.style.display    = 'none';
+    resume.style.display   = '';
+  } else {
+    dot.style.background   = 'var(--positive)';
+    label.textContent      = '▶ 稼働中';
+    label.style.color      = 'var(--positive)';
+    pause.style.display    = '';
+    resume.style.display   = 'none';
+  }
+}
+
+async function pauseTrader() {
+  if (!confirm('自動取引を一時停止しますか？\n（進行中の監視は停止しますが、改善分析は続きます）')) return;
+  try {
+    const res  = await fetch('/api/trader/pause', { method: 'POST' });
+    const data = await res.json();
+    _applyTraderStatus(true);
+    alert('一時停止しました。再開するには「再開」ボタンを押してください。');
+  } catch (e) {
+    alert(`エラー: ${e.message}`);
+  }
+}
+
+async function resumeTrader() {
+  try {
+    const res  = await fetch('/api/trader/resume', { method: 'POST' });
+    const data = await res.json();
+    _applyTraderStatus(false);
+    alert('自動取引を再開しました。次の取引時間から有効です。');
+  } catch (e) {
+    alert(`エラー: ${e.message}`);
+  }
+}
+
+// loadAutoTraderData に追加ロードを組み込む（上書き）
+const _origLoadAutoTraderData = loadAutoTraderData;
+loadAutoTraderData = async function () {
+  await Promise.all([
+    _origLoadAutoTraderData(),
+    loadTraderStatus(),
+    loadEquityChart(),
+  ]);
+};

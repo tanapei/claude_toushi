@@ -130,31 +130,30 @@ class OrderExecutor:
     # ─── 内部実装 ───────────────────────────────────────────
 
     def _buy(self, signal: Dict) -> Dict:
-        """1銘柄の成行買い注文を実行する。"""
+        """1銘柄の成行買い注文を実行し、約定を確認してからポートフォリオに記録する。"""
         ticker          = signal["ticker"]
         kabu_symbol, exchange = ticker_to_kabu(ticker)
 
         board       = self.client.get_board(kabu_symbol, exchange)
         symbol_info = self.client.get_symbol_info(kabu_symbol, exchange)
 
-        current_price = _extract_price(board)
-        if current_price <= 0:
-            raise ValueError(f"現在値が取得できません (price={current_price})")
+        board_price = _extract_price(board)
+        if board_price <= 0:
+            raise ValueError(f"現在値が取得できません (price={board_price})")
 
         trading_unit = int(symbol_info.get("TradingUnit", 100))
-        qty          = _calc_qty(current_price, trading_unit)
+        qty          = _calc_qty(board_price, trading_unit)
         if qty <= 0:
             raise ValueError(
-                f"買付余力不足: 1単元コスト ¥{current_price * trading_unit:,.0f}"
+                f"買付余力不足: 1単元コスト ¥{board_price * trading_unit:,.0f}"
             )
 
-        invested = current_price * qty
         logger.info(
-            f"[{ticker}] 成行買い — {qty}株 @ 約¥{current_price:,.0f}"
-            f" = 約¥{invested:,.0f}"
+            f"[{ticker}] 成行買い発注 — {qty}株 @ 約¥{board_price:,.0f}"
+            f" = 約¥{board_price * qty:,.0f}"
         )
 
-        order = self.client.send_order(
+        order    = self.client.send_order(
             symbol=kabu_symbol,
             exchange=exchange,
             side="2",
@@ -162,46 +161,59 @@ class OrderExecutor:
             trade_password=KABU_TRADE_PASSWORD,
             front_order_type=10,  # 成行
         )
+        order_id = order.get("OrderId", "")
 
+        # 約定確認（最大20秒ポーリング）
+        fill        = self.client.wait_for_fill(order_id)
+        entry_price = fill["fill_price"] if fill["filled"] and fill["fill_price"] > 0 else board_price
+        actual_qty  = fill["fill_qty"]   if fill["filled"] and fill["fill_qty"]   > 0 else qty
+
+        if not fill["filled"]:
+            logger.warning(
+                f"[{ticker}] 約定未確認（発注は受付済）。板価格 ¥{board_price:,.0f} で記録します。"
+            )
+
+        invested = entry_price * actual_qty
         self.portfolio.add_position(
             ticker=ticker,
-            entry_price=current_price,
-            shares=qty,
+            entry_price=entry_price,
+            shares=actual_qty,
             market="JP",
             label=signal.get("label", ""),
             invested_amount=int(invested),
         )
+        logger.info(
+            f"[{ticker}] ポートフォリオ記録: {actual_qty}株 @ ¥{entry_price:,.0f}"
+            f" = ¥{invested:,.0f}（{'約定確認済' if fill['filled'] else '約定未確認'}）"
+        )
 
         return {
-            "ticker":   ticker,
-            "status":   "ordered",
-            "side":     "buy",
-            "qty":      qty,
-            "price":    current_price,
-            "invested": int(invested),
-            "order_id": order.get("OrderId"),
+            "ticker":        ticker,
+            "status":        "ordered",
+            "side":          "buy",
+            "qty":           actual_qty,
+            "price":         entry_price,
+            "invested":      int(invested),
+            "order_id":      order_id,
+            "fill_confirmed": fill["filled"],
         }
 
     def _sell(self, ticker: str, reason: str = "") -> Dict:
-        """1銘柄の成行売り注文を実行する。"""
+        """1銘柄の成行売り注文を実行し、約定価格でトレードを記録する。"""
         pos = self.portfolio.get_position(ticker)
         if not pos:
             raise ValueError(f"{ticker} は保有していません")
 
         kabu_symbol, exchange = ticker_to_kabu(ticker)
-        qty   = int(pos["shares"])
-        board = self.client.get_board(kabu_symbol, exchange)
-        current_price = _extract_price(board)
-
-        pnl     = (current_price - pos["entry_price"]) * qty if current_price > 0 else 0
-        pnl_pct = (current_price - pos["entry_price"]) / pos["entry_price"] * 100 if current_price > 0 else 0
+        qty         = int(pos["shares"])
+        board       = self.client.get_board(kabu_symbol, exchange)
+        board_price = _extract_price(board)
 
         logger.info(
-            f"[{ticker}] 成行売り — {qty}株 @ 約¥{current_price:,.0f}"
-            f"  P&L {pnl_pct:+.1f}%  理由: {reason}"
+            f"[{ticker}] 成行売り発注 — {qty}株 @ 約¥{board_price:,.0f}  理由: {reason}"
         )
 
-        order = self.client.send_order(
+        order    = self.client.send_order(
             symbol=kabu_symbol,
             exchange=exchange,
             side="1",
@@ -209,31 +221,51 @@ class OrderExecutor:
             trade_password=KABU_TRADE_PASSWORD,
             front_order_type=10,  # 成行
         )
+        order_id = order.get("OrderId", "")
 
-        # ポートフォリオから削除 & 実トレードを記録
+        # 約定確認（最大20秒）
+        fill       = self.client.wait_for_fill(order_id)
+        exit_price = fill["fill_price"] if fill["filled"] and fill["fill_price"] > 0 else board_price
+
+        if not fill["filled"]:
+            logger.warning(
+                f"[{ticker}] 売り約定未確認。板価格 ¥{board_price:,.0f} で損益を計算します。"
+            )
+
+        pnl     = (exit_price - pos["entry_price"]) * qty
+        pnl_pct = (exit_price - pos["entry_price"]) / pos["entry_price"] * 100
+
+        logger.info(
+            f"[{ticker}] 売却完了: {qty}株 @ ¥{exit_price:,.0f}"
+            f"  P&L {pnl_pct:+.1f}%  ({'約定確認済' if fill['filled'] else '約定未確認'})"
+        )
+
+        from datetime import date as _date
         self.portfolio.remove_position(ticker)
         _log_real_trade({
             "ticker":      ticker,
             "label":       pos.get("label", ""),
             "entry_price": pos["entry_price"],
-            "exit_price":  current_price,
+            "exit_price":  exit_price,
             "shares":      qty,
             "pnl":         round(pnl),
             "pnl_pct":     round(pnl_pct, 2),
             "entry_date":  pos.get("entry_date", ""),
+            "exit_date":   _date.today().isoformat(),
             "exit_reason": reason,
         })
 
         return {
-            "ticker":   ticker,
-            "status":   "ordered",
-            "side":     "sell",
-            "qty":      qty,
-            "price":    current_price,
-            "pnl":      round(pnl),
-            "pnl_pct":  round(pnl_pct, 2),
-            "reason":   reason,
-            "order_id": order.get("OrderId"),
+            "ticker":        ticker,
+            "status":        "ordered",
+            "side":          "sell",
+            "qty":           qty,
+            "price":         exit_price,
+            "pnl":           round(pnl),
+            "pnl_pct":       round(pnl_pct, 2),
+            "reason":        reason,
+            "order_id":      order_id,
+            "fill_confirmed": fill["filled"],
         }
 
 

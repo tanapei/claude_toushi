@@ -34,7 +34,7 @@ ROOT = Path(__file__).parent
 sys.path.insert(0, str(ROOT))
 load_dotenv(ROOT / ".env")
 
-from trading_system.config import LOGS_DIR
+from trading_system.config import LOGS_DIR, DATA_DIR
 from trading_system.kabu_client import KabuClient, KabuAPIError
 
 JST = pytz.timezone("Asia/Tokyo")
@@ -51,18 +51,40 @@ logging.basicConfig(
 )
 logger = logging.getLogger("local_trader")
 
+# 一時停止フラグファイル
+PAUSE_FLAG = DATA_DIR / "trader_paused.flag"
+
+
+# ─── 一時停止チェック ─────────────────────────────────────────
+
+def is_paused() -> bool:
+    return PAUSE_FLAG.exists()
+
 
 # ─── 日時ユーティリティ ───────────────────────────────────────
 
 def _now_jst() -> datetime:
     return datetime.now(JST)
 
-def is_weekday() -> bool:
-    return _now_jst().weekday() < 5  # 月=0 〜 金=4
+
+def is_trading_day() -> bool:
+    """今日が取引日（平日かつ祝日でない）かどうかを確認する。"""
+    today = _now_jst().date()
+    if today.weekday() >= 5:  # 土日
+        return False
+    try:
+        import jpholiday
+        if jpholiday.is_holiday(today):
+            logger.debug(f"{today} は祝日のためスキップ")
+            return False
+    except ImportError:
+        logger.warning("jpholiday 未インストール。祝日チェックをスキップします。")
+    return True
+
 
 def is_market_open() -> bool:
-    """東証が取引中かどうかを簡易チェックする（祝日は未考慮）。"""
-    if not is_weekday():
+    """東証が取引中かどうかを確認する（9:00〜15:25）。"""
+    if not is_trading_day():
         return False
     h, m = _now_jst().hour, _now_jst().minute
     return (9, 0) <= (h, m) <= (15, 25)
@@ -71,10 +93,12 @@ def is_market_open() -> bool:
 # ─── 朝の発注処理 ─────────────────────────────────────────────
 
 def morning_routine():
-    """
-    09:00: シグナル生成 → 売り注文 → 買い注文
-    """
-    if not is_weekday():
+    """09:00: シグナル生成 → 売り注文 → 買い注文"""
+    if not is_trading_day():
+        logger.info("本日は非取引日のためスキップ")
+        return
+    if is_paused():
+        logger.info("⏸ 一時停止中のため朝の発注をスキップ")
         return
 
     logger.info("╔══════════════════════════════════╗")
@@ -133,11 +157,10 @@ def morning_routine():
 # ─── ポジション監視 ───────────────────────────────────────────
 
 def monitor_routine():
-    """
-    5分ごと（取引時間中のみ）:
-    損切り・利確・トレーリングストップを確認して自動売却する。
-    """
+    """5分ごと（取引時間中のみ）: 損切り・利確・トレーリングストップを確認して自動売却する。"""
     if not is_market_open():
+        return
+    if is_paused():
         return
 
     try:
@@ -165,11 +188,10 @@ def monitor_routine():
 # ─── 引け後の改善分析 ─────────────────────────────────────────
 
 def closing_routine():
-    """
-    15:30: 本日の取引結果を記録し、Claude が改善分析を実行する。
-    """
-    if not is_weekday():
+    """15:30: 本日の取引結果を記録し、Claude が改善分析を実行する。"""
+    if not is_trading_day():
         return
+    # 改善分析は一時停止中でも実行する（データを蓄積するため）
 
     logger.info("╔══════════════════════════════════╗")
     logger.info("║  引け後の改善分析 開始            ║")
@@ -196,7 +218,7 @@ def _setup_schedule():
     schedule.every(5).minutes.do(monitor_routine)
 
     logger.info("スケジュール設定完了")
-    logger.info("  平日 09:00 JST  → 朝の発注処理")
+    logger.info("  平日 09:00 JST  → 朝の発注処理（祝日チェック済み）")
     logger.info("  平日 5分ごと     → ポジション監視（取引時間中のみ）")
     logger.info("  平日 15:30 JST  → 引け後の改善分析")
 
@@ -208,6 +230,9 @@ def main():
     logger.info("║   Claude 自動トレーダー 起動              ║")
     logger.info(f"║   {datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S %Z')}              ║")
     logger.info("╚══════════════════════════════════════════╝")
+
+    if is_paused():
+        logger.warning("⚠ 一時停止フラグが立っています。取引はスキップされます（改善分析は実行されます）。")
 
     # kabuステーション® 接続確認
     logger.info("kabuステーション® API 接続確認中...")

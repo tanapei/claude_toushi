@@ -164,6 +164,56 @@ class KabuClient:
         self._check(resp)
         return resp.json() or []
 
+    def wait_for_fill(
+        self,
+        order_id: str,
+        timeout_sec: int = 20,
+        poll_interval: float = 2.0,
+    ) -> Dict:
+        """
+        注文が約定するまでポーリングして待機する。
+
+        Returns:
+            {"filled": bool, "fill_price": float, "fill_qty": int}
+        """
+        deadline = time.time() + timeout_sec
+        while time.time() < deadline:
+            try:
+                orders = self.get_orders(active_only=False)
+                for o in orders:
+                    if str(o.get("ID", "")) != str(order_id):
+                        continue
+                    state   = o.get("State", 0)
+                    cum_qty = int(o.get("CumQty", 0))
+                    # State 5=完了（全部約定）
+                    if state == 5 and cum_qty > 0:
+                        # 約定詳細から平均価格を計算
+                        details = o.get("Details", [])
+                        filled_prices = [
+                            d.get("Price", 0) for d in details
+                            if d.get("Type") == 2 and d.get("Price")  # Type 2=約定
+                        ]
+                        avg_price = (
+                            sum(filled_prices) / len(filled_prices)
+                            if filled_prices else 0
+                        )
+                        logger.info(
+                            f"約定確認: OrderId={order_id} "
+                            f"約定数量={cum_qty} 平均価格=¥{avg_price:,.0f}"
+                        )
+                        return {"filled": True, "fill_price": avg_price, "fill_qty": cum_qty}
+                    # State 6=取消/失敗
+                    if state == 6:
+                        logger.warning(f"注文キャンセル/失敗: OrderId={order_id} State={state}")
+                        return {"filled": False, "fill_price": 0, "fill_qty": 0}
+                    break  # 該当注文は見つかったがまだ約定待ち
+            except Exception as e:
+                logger.warning(f"約定確認エラー（リトライ）: {e}")
+            time.sleep(poll_interval)
+
+        logger.warning(f"約定確認タイムアウト: OrderId={order_id} ({timeout_sec}秒)")
+        return {"filled": False, "fill_price": 0, "fill_qty": 0}
+
     def get_positions(self) -> List[Dict]:
         """保有ポジション一覧を取得する。"""
         resp = requests.get(

@@ -803,6 +803,81 @@ def get_trade_diary_entry(trade_id: str):
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/real-trades/equity")
+def get_real_trades_equity():
+    """実取引の累積損益曲線データを返す（Chart.js 用）。"""
+    try:
+        from trading_system.auto_improver import _load_real_trades
+        trades = _load_real_trades()
+        if not trades:
+            return jsonify({"labels": [], "cumulative_pnl": [], "cumulative_pnl_pct": []})
+
+        # exit_date でソートして累積計算
+        def _exit_date(t):
+            return t.get("exit_date") or t.get("logged_at", "")[:10] or "9999"
+
+        sorted_trades = sorted(trades, key=_exit_date)
+        labels, cum_pnl, cum_pct = [], [], []
+        total_pnl  = 0
+        total_pct  = 0
+        for t in sorted_trades:
+            total_pnl += t.get("pnl", 0)
+            total_pct += t.get("pnl_pct", 0)
+            labels.append(_exit_date(t))
+            cum_pnl.append(round(total_pnl))
+            cum_pct.append(round(total_pct, 2))
+
+        return jsonify({
+            "labels": labels,
+            "cumulative_pnl": cum_pnl,
+            "cumulative_pnl_pct": cum_pct,
+        })
+    except Exception as e:
+        logger.exception("累積損益取得エラー")
+        return jsonify({"error": str(e)}), 500
+
+
+# ─────────────────────────────────────────────
+# 自動取引 一時停止 / 再開 API
+# ─────────────────────────────────────────────
+
+def _pause_flag_path():
+    from trading_system.config import DATA_DIR
+    return DATA_DIR / "trader_paused.flag"
+
+
+@app.route("/api/trader/status")
+def get_trader_status():
+    """自動取引の現在の状態（稼働中 / 一時停止中）を返す。"""
+    paused = _pause_flag_path().exists()
+    return jsonify({"paused": paused, "status": "paused" if paused else "running"})
+
+
+@app.route("/api/trader/pause", methods=["POST"])
+def pause_trader():
+    """自動取引を一時停止する（フラグファイルを作成）。"""
+    try:
+        flag = _pause_flag_path()
+        flag.write_text(datetime.now().isoformat(), encoding="utf-8")
+        logger.info("自動取引を一時停止しました")
+        return jsonify({"status": "paused"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/trader/resume", methods=["POST"])
+def resume_trader():
+    """自動取引を再開する（フラグファイルを削除）。"""
+    try:
+        flag = _pause_flag_path()
+        if flag.exists():
+            flag.unlink()
+        logger.info("自動取引を再開しました")
+        return jsonify({"status": "running"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     print(f"\n株式取引シミュレーション UI 起動中...")

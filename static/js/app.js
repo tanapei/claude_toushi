@@ -1247,7 +1247,7 @@ function scrollToDiaryEntry(tradeId) {
 
 let _atEquityChart = null;
 
-async function loadEquityChart() {
+async function loadAtEquityChart() {
   try {
     const res  = await fetch('/api/real-trades/equity');
     const data = await res.json();
@@ -1371,6 +1371,6 @@ loadAutoTraderData = async function () {
   await Promise.all([
     _origLoadAutoTraderData(),
     loadTraderStatus(),
-    loadEquityChart(),
+    loadAtEquityChart(),
   ]);
 };

@@ -10,8 +10,10 @@ LINE にプッシュ通知する。
 
 いずれかが未設定の場合は通知をスキップする（取引ロジックには影響なし）。
 """
+import json
 import logging
 import os
+from pathlib import Path
 from typing import Optional
 
 import requests
@@ -21,17 +23,37 @@ logger = logging.getLogger(__name__)
 LINE_API_URL = "https://api.line.me/v2/bot/message/push"
 _TIMEOUT     = 10  # 秒
 
+_SETTINGS_FILE = Path(__file__).parent.parent / "settings.json"
+
+
+def _load_line_credentials() -> tuple[str, str]:
+    """LINE認証情報を settings.json → 環境変数の優先順で取得する。"""
+    token   = ""
+    user_id = ""
+    try:
+        if _SETTINGS_FILE.exists():
+            s       = json.loads(_SETTINGS_FILE.read_text(encoding="utf-8"))
+            token   = s.get("line_channel_token", "")
+            user_id = s.get("line_user_id", "")
+    except Exception:
+        pass
+    return (
+        token   or os.getenv("LINE_CHANNEL_ACCESS_TOKEN", ""),
+        user_id or os.getenv("LINE_USER_ID", ""),
+    )
+
 
 def _token() -> str:
-    return os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
+    return _load_line_credentials()[0]
 
 
 def _user_id() -> str:
-    return os.getenv("LINE_USER_ID", "")
+    return _load_line_credentials()[1]
 
 
 def _is_configured() -> bool:
-    return bool(_token() and _user_id())
+    t, u = _load_line_credentials()
+    return bool(t and u)
 
 
 def send(message: str) -> bool:
@@ -41,18 +63,19 @@ def send(message: str) -> bool:
     Returns:
         True: 送信成功 / False: スキップまたは失敗
     """
-    if not _is_configured():
+    token, user_id = _load_line_credentials()
+    if not (token and user_id):
         return False
 
     try:
         resp = requests.post(
             LINE_API_URL,
             headers={
-                "Authorization": f"Bearer {_token()}",
+                "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
             },
             json={
-                "to": _user_id(),
+                "to": user_id,
                 "messages": [{"type": "text", "text": message}],
             },
             timeout=_TIMEOUT,
@@ -127,3 +150,54 @@ def notify_error(context: str, error: str) -> None:
         f"場所: {context}\n"
         f"内容: {error[:100]}"
     )
+
+
+def notify_morning_signal(
+    top_scored: list,
+    market_bullish: bool,
+    mode: str = "paper",
+    top_n: int = 5,
+) -> None:
+    """朝の注目銘柄をLINEに通知する。
+
+    Args:
+        top_scored: score_universe() の結果リスト（スコア降順）
+        market_bullish: 市場レジーム判定
+        mode: "paper" or "live"
+        top_n: 通知する上位銘柄数
+    """
+    from datetime import datetime
+    import pytz
+    now_str = datetime.now(pytz.timezone("Asia/Tokyo")).strftime("%m/%d %H:%M")
+
+    regime = "📈 強気（新規買い有効）" if market_bullish else "📉 弱気（新規買い抑制）"
+    mode_str = "📄 ペーパー" if mode != "live" else "💴 ライブ"
+
+    lines = [
+        f"📊 本日の注目銘柄 [{now_str}]",
+        f"市場レジーム: {regime}",
+        "━━━━━━━━━━━━━━",
+    ]
+
+    targets = [s for s in top_scored if s.get("score", 0) > 0][:top_n]
+    if not targets:
+        lines.append("（スコア対象銘柄なし）")
+    else:
+        sig_labels = {"buy": "🟢買い", "watch": "👀監視", "none": "　—　"}
+        for i, s in enumerate(targets, 1):
+            label = s.get("label") or s.get("ticker", "")
+            score = s.get("score", 0)
+            mom   = s.get("momentum_6m_pct", 0)
+            sig   = sig_labels.get(s.get("signal", "none"), "　—　")
+            mom_str = f"{mom:+.1f}%" if mom else "—"
+            lines.append(
+                f"{i}. {label}（{s['ticker']}）\n"
+                f"   スコア {score}点 / 6M {mom_str} / {sig}"
+            )
+
+    lines += [
+        "━━━━━━━━━━━━━━",
+        f"モード: {mode_str}トレード",
+    ]
+
+    send("\n".join(lines))

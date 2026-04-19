@@ -247,14 +247,13 @@ def main():
         balance = wallet.get("StockAccountWallet", 0)
         logger.info(f"接続OK ✓  現物買付余力: ¥{balance:,.0f}")
     except KabuAPIError as e:
-        logger.error("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        logger.error(f"kabuステーション® に接続できません: {e}")
-        logger.error("以下を確認してください:")
-        logger.error("  1. kabuステーション® が起動・ログイン済みであること")
-        logger.error("  2. kabuステーション® の設定 → API → APIパスワードが設定されていること")
-        logger.error("  3. .env の KABU_API_PASSWORD が正しいこと")
-        logger.error("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        sys.exit(1)
+        logger.warning("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        logger.warning(f"kabuステーション® に接続できません: {e}")
+        logger.warning("取引機能は無効で起動します（動作確認モード）。")
+        logger.warning("kabuステーション® 起動後に再起動してください。")
+        logger.warning("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    except Exception as e:
+        logger.warning(f"接続確認エラー（起動は続行）: {e}")
 
     _setup_schedule()
     logger.info("スケジューラー稼働中... (Ctrl+C で停止)")

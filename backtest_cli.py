@@ -236,14 +236,36 @@ def main():
     summary, trades_list = run_single(params, save=True)
     print_report(params, summary, trades_list)
 
-    # JSON に保存
+    # ① タイムスタンプ付きで保存（履歴用）
     out_dir = ROOT / "results"
     out_dir.mkdir(exist_ok=True)
-    fname = out_dir / f"bt_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-    with open(fname, "w", encoding="utf-8") as f:
-        json.dump({"params": params, "summary": summary, "trades": trades_list[:50]}, f,
-                  ensure_ascii=False, indent=2, default=str)
-    print(f"結果を保存しました: {fname}")
+    ts_fname = out_dir / f"bt_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+
+    payload = {"params": params, "summary": summary, "trades": trades_list}
+    with open(ts_fname, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2, default=str)
+
+    # ② latest.json に上書き（Claude が常にここを読む）
+    latest = out_dir / "latest.json"
+    with open(latest, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2, default=str)
+
+    print(f"結果を保存しました: {ts_fname}")
+    print(f"latest.json を更新しました: {latest}")
+
+    # ③ git push で Claude が読めるようにする
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    print("\nClaudeが読めるよう git push します...")
+    ret = os.system(
+        f'cd "{ROOT}" && '
+        f'git add results/latest.json && '
+        f'git commit -m "backtest result {ts}" --allow-empty && '
+        f'git push origin HEAD'
+    )
+    if ret == 0:
+        print("✓ push 完了 — Claudeが結果を確認できます")
+    else:
+        print("⚠ push に失敗しました。手動で git push してください")
 
 
 if __name__ == "__main__":

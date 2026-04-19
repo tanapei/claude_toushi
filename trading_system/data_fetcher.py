@@ -125,7 +125,8 @@ def load_universe_data(
 
     if cache_path.exists():
         logger.info(f"キャッシュからデータを読み込み: {cache_path}")
-        return pd.read_pickle(cache_path)
+        cached = pd.read_pickle(cache_path)
+        return {t: df for t, df in cached.items() if t in tickers}
 
     logger.info(f"{len(tickers)}銘柄のデータを取得中...")
     data = fetch_stock_data(tickers, start_date, end_date)

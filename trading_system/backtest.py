@@ -25,13 +25,25 @@ from trading_system.trade_logger import TradeLogger
 logger = logging.getLogger(__name__)
 
 
+FACTOR_PARAMS_DEFAULT = {
+    "buy_threshold":     70,   # スコア閾値（0-100）
+    "stop_loss_pct":      5,   # 損切り（%）
+    "take_profit_pct":   15,   # 利確（%）
+    "trailing_stop_pct":  6,   # トレーリングストップ（%）
+}
+
+
 class Backtester:
     """
     バックテストエンジン
 
+    strategy_mode:
+      "classic" … EMA/RSI/MACD/ADX による従来戦略（strategy.py）
+      "factor"  … ファクタースコア戦略（factor_scorer.py＝現在の自動取引ルール）
+
     動作フロー:
     1. 全銘柄のOHLCVデータ取得
-    2. テクニカル指標を全銘柄に追加
+    2. [classic] テクニカル指標追加 / [factor] ファクタースコア事前計算
     3. 各日付でシグナル生成・注文執行
     4. ポートフォリオ状態を更新
     5. 結果を保存・分析
@@ -44,18 +56,27 @@ class Backtester:
         strategy_params: Optional[Dict] = None,
         tickers: Optional[List[str]] = None,
         run_id: Optional[str] = None,
+        strategy_mode: str = "classic",
+        factor_params: Optional[Dict] = None,
     ):
-        self.start_date = start_date
-        self.end_date = end_date
+        self.start_date    = start_date
+        self.end_date      = end_date
+        self.strategy_mode = strategy_mode
         self.strategy_params = strategy_params or STRATEGY_PARAMS.copy()
+        self.factor_params = {**FACTOR_PARAMS_DEFAULT, **(factor_params or {})}
         self.tickers = tickers or VALID_UNIVERSE
-        self.run_id = run_id or f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
+        self.run_id  = run_id or f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
 
-        self.portfolio = Portfolio()
-        self.logger = TradeLogger()
+        # ファクターモードでは200日EMAで市場レジームを判定（自動取引と同じ）
+        if self.strategy_mode == "factor":
+            self.strategy_params = self.strategy_params.copy()
+            self.strategy_params["market_regime_ema"] = 200
+
+        self.portfolio   = Portfolio()
+        self.logger      = TradeLogger()
         self.data: Dict[str, pd.DataFrame] = {}
         self.all_dates: List[pd.Timestamp] = []
-        self.nikkei_data: pd.DataFrame = pd.DataFrame()  # 市場レジームフィルタ用
+        self.nikkei_data: pd.DataFrame = pd.DataFrame()
 
     def run(self, save_results: bool = True, analyze: bool = True) -> Dict:
         """
@@ -78,8 +99,12 @@ class Backtester:
             logger.error("データ取得に失敗しました")
             return {}
 
-        # 2. テクニカル指標追加
-        self._add_indicators()
+        # 2. 指標計算 / スコア事前計算
+        if self.strategy_mode == "factor":
+            self._factor_scores = self._precompute_factor_scores()
+        else:
+            self._add_indicators()
+            self._factor_scores = {}
 
         # 3. バックテストループ
         self._run_simulation()
@@ -136,6 +161,51 @@ class Backtester:
         self.all_dates = sorted(all_dates_set)
         logger.info(f"取引日数: {len(self.all_dates)}日")
 
+    def _precompute_factor_scores(self) -> Dict:
+        """
+        全銘柄×全日付のファクタースコアを事前計算する（ファクターモード用）。
+        Returns: {date: {ticker: score}}
+        """
+        from trading_system.factor_scorer import score_stock
+        logger.info("ファクタースコアを事前計算中（しばらくお待ちください）...")
+        scores: Dict = {}
+        n = len(self.all_dates)
+
+        for i, date in enumerate(self.all_dates):
+            if i < 60:
+                continue
+            if i % 100 == 0:
+                logger.info(f"  スコア計算: {date.date()} ({i}/{n}日)")
+
+            # 6ヶ月モメンタムを全銘柄で計算してランク付け
+            momentum: Dict[str, float] = {}
+            for ticker, df in self.data.items():
+                df_s = df[df.index <= date]
+                if len(df_s) >= 126:
+                    ret = (float(df_s["close"].iloc[-1]) - float(df_s["close"].iloc[-126])) \
+                          / float(df_s["close"].iloc[-126])
+                    momentum[ticker] = ret
+
+            if momentum:
+                ranked   = sorted(momentum, key=momentum.get, reverse=True)
+                rank_map = {t: idx / len(ranked) for idx, t in enumerate(ranked)}
+            else:
+                rank_map = {t: 0.5 for t in self.data}
+
+            date_scores: Dict[str, int] = {}
+            for ticker, df in self.data.items():
+                df_s = df[df.index <= date]
+                if len(df_s) < 60:
+                    continue
+                rank_pct = rank_map.get(ticker, 0.5)
+                score, _, _ = score_stock(df_s, rank_pct)
+                date_scores[ticker] = score
+
+            scores[date] = date_scores
+
+        logger.info(f"ファクタースコア計算完了: {len(scores)}日分")
+        return scores
+
     def set_raw_data(
         self,
         raw_data: Dict[str, pd.DataFrame],
@@ -158,7 +228,9 @@ class Backtester:
             self.nikkei_data = nikkei_copy
 
     def _add_indicators(self) -> None:
-        """全銘柄にテクニカル指標を追加する。"""
+        """全銘柄にテクニカル指標を追加する（classic モードのみ使用）。"""
+        if self.strategy_mode == "factor":
+            return
         logger.info("テクニカル指標を計算中...")
         for ticker in list(self.data.keys()):
             try:
@@ -167,9 +239,92 @@ class Backtester:
                 logger.warning(f"[{ticker}] 指標計算エラー: {e}")
                 del self.data[ticker]
 
+    def _run_simulation_factor(self, progress_callback=None, cancel_check=None) -> None:
+        """ファクタースコア戦略のシミュレーションループ（自動取引と同じルール）。"""
+        fp              = self.factor_params
+        buy_threshold   = int(fp.get("buy_threshold",    70))
+        stop_loss       = float(fp.get("stop_loss_pct",   5)) / 100
+        take_profit     = float(fp.get("take_profit_pct", 15)) / 100
+        trailing_stop   = float(fp.get("trailing_stop_pct", 6)) / 100
+        factor_scores   = getattr(self, "_factor_scores", {})
+
+        logger.info(f"ファクター戦略シミュレーション開始 "
+                    f"(閾値={buy_threshold}pt, 損切={stop_loss*100:.0f}%, "
+                    f"利確={take_profit*100:.0f}%, トレーリング={trailing_stop*100:.0f}%)")
+        n_dates = len(self.all_dates)
+        step    = max(1, n_dates // 20)
+
+        for i, date in enumerate(self.all_dates):
+            if cancel_check and cancel_check():
+                break
+            if i % step == 0:
+                pct = int(i / n_dates * 100)
+                msg = f"[ファクター戦略] {date.date()} ({i}/{n_dates}日)"
+                if progress_callback:
+                    progress_callback(pct, msg)
+                else:
+                    logger.info(f"進捗: {pct}% {date.date()}")
+
+            current_prices = self._get_prices_at(date)
+
+            # ① 損切り・利確・トレーリングストップ
+            for ticker, pos in list(self.portfolio.positions.items()):
+                price = current_prices.get(ticker)
+                if price is None:
+                    continue
+                ep  = pos.entry_price
+                hp  = pos.highest_price
+                pnl = (price - ep) / ep
+                if price <= ep * (1 - stop_loss):
+                    reason = f"損切りライン到達（{pnl*100:+.1f}%）"
+                elif price >= ep * (1 + take_profit):
+                    reason = f"利確ライン到達（{pnl*100:+.1f}%）"
+                elif hp > ep * 1.03 and price <= hp * (1 - trailing_stop):
+                    dd = (price - hp) / hp * 100
+                    reason = f"トレーリングストップ（高値から{dd:.1f}%下落）"
+                else:
+                    continue
+                self.portfolio.sell(ticker=ticker, date=date, price=price, reason=reason)
+
+            # ② 市場レジームチェック（日経225 vs 200日EMA）
+            market_bullish = self._is_market_bullish(date)
+
+            # ③ 買いシグナル（スコア閾値超え・スコア降順）
+            if market_bullish and len(self.portfolio.positions) < self.portfolio.max_positions:
+                day_scores = factor_scores.get(date, {})
+                candidates = sorted(
+                    [(t, s) for t, s in day_scores.items() if s >= buy_threshold],
+                    key=lambda x: x[1], reverse=True,
+                )
+                for ticker, score in candidates:
+                    if ticker in self.portfolio.positions:
+                        continue
+                    if len(self.portfolio.positions) >= self.portfolio.max_positions:
+                        break
+                    price = current_prices.get(ticker, 0)
+                    if price <= 0:
+                        continue
+                    self.portfolio.buy(
+                        ticker=ticker, date=date, price=price,
+                        reason=f"ファクタースコア {score}点",
+                    )
+
+            # ④ トレーリングストップ高値更新 & 日次資産記録
+            self.portfolio.update_trailing_stops(date, current_prices)
+            self.portfolio.record_equity(date, current_prices)
+
+        self._close_all_positions()
+        logger.info("ファクター戦略シミュレーション完了")
+
     def _run_simulation(self, progress_callback=None, cancel_check=None) -> None:
+        """モードに応じて classic / factor シミュレーションを実行する。"""
+        if self.strategy_mode == "factor":
+            return self._run_simulation_factor(progress_callback, cancel_check)
+        return self._run_simulation_classic(progress_callback, cancel_check)
+
+    def _run_simulation_classic(self, progress_callback=None, cancel_check=None) -> None:
         """
-        メインのシミュレーションループ。
+        従来戦略（EMA/RSI/MACD/ADX）のシミュレーションループ。
 
         Args:
             progress_callback: (pct: int, msg: str) -> None  進捗通知コールバック

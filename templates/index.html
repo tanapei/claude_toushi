@@ -269,6 +269,51 @@
       <!-- 左: 設定フォーム -->
       <div class="card run-form-card">
         <form id="run-form">
+          <!-- 戦略タイプ -->
+          <div class="form-group">
+            <label>戦略タイプ</label>
+            <div class="radio-group">
+              <label class="radio-label">
+                <input type="radio" name="strategy_mode" value="classic" checked
+                       onchange="onStrategyModeChange(this.value)" />
+                <span>従来戦略（EMA / RSI / MACD）</span>
+              </label>
+              <label class="radio-label">
+                <input type="radio" name="strategy_mode" value="factor"
+                       onchange="onStrategyModeChange(this.value)" />
+                <span>🤖 ファクタースコア戦略（現在の自動取引ルール）</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- ファクター戦略パラメータ（factor モード時のみ表示） -->
+          <div id="factor-params-card" class="hidden" style="background:var(--surface2);border-radius:10px;padding:16px;margin-bottom:16px">
+            <div style="font-size:13px;font-weight:600;margin-bottom:12px;color:var(--primary)">
+              ファクタースコア戦略 パラメータ
+            </div>
+            <div class="param-grid">
+              <div class="param-item">
+                <label for="fp_buy_threshold">買いスコア閾値（0-100）</label>
+                <input type="number" id="fp_buy_threshold" value="70" min="50" max="95" step="1" />
+              </div>
+              <div class="param-item">
+                <label for="fp_stop_loss_pct">損切りライン（%）</label>
+                <input type="number" id="fp_stop_loss_pct" value="5" min="1" max="20" step="0.5" />
+              </div>
+              <div class="param-item">
+                <label for="fp_take_profit_pct">利確ライン（%）</label>
+                <input type="number" id="fp_take_profit_pct" value="15" min="5" max="50" step="1" />
+              </div>
+              <div class="param-item">
+                <label for="fp_trailing_stop_pct">トレーリングストップ（%）</label>
+                <input type="number" id="fp_trailing_stop_pct" value="6" min="2" max="20" step="0.5" />
+              </div>
+            </div>
+            <p style="font-size:11px;color:var(--text-muted);margin-top:8px">
+              ※ 市場レジーム判定: 日経225 vs 200日EMA（自動取引と同じ設定）
+            </p>
+          </div>
+
           <!-- 基本設定 -->
           <div class="form-group">
             <label>実行モード</label>

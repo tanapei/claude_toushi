@@ -128,16 +128,40 @@ function initRunForm() {
   });
 }
 
+function onStrategyModeChange(value) {
+  const factorCard  = document.getElementById('factor-params-card');
+  const paramDetail = document.querySelector('#run-form details.param-details');
+
+  if (value === 'factor') {
+    factorCard.classList.remove('hidden');
+    if (paramDetail) paramDetail.open = false;
+  } else {
+    factorCard.classList.add('hidden');
+    if (paramDetail) paramDetail.open = true;
+  }
+}
+
 async function startBacktest() {
-  const mode       = document.querySelector('input[name="mode"]:checked').value;
-  const start_date = document.getElementById('start-date').value;
-  const end_date   = document.getElementById('end-date').value;
-  const iterations = parseInt(document.getElementById('iterations').value, 10);
+  const mode          = document.querySelector('input[name="mode"]:checked').value;
+  const start_date    = document.getElementById('start-date').value;
+  const end_date      = document.getElementById('end-date').value;
+  const iterations    = parseInt(document.getElementById('iterations').value, 10);
+  const strategyMode  = document.querySelector('input[name="strategy_mode"]:checked')?.value || 'classic';
 
   const payload = {
     mode, start_date, end_date, iterations,
+    strategy_mode: strategyMode,
     strategy_params: readParams(),
   };
+
+  if (strategyMode === 'factor') {
+    payload.factor_params = {
+      buy_threshold:      parseFloat(document.getElementById('fp_buy_threshold').value)      || 70,
+      stop_loss_pct:      parseFloat(document.getElementById('fp_stop_loss_pct').value)      || 5,
+      take_profit_pct:    parseFloat(document.getElementById('fp_take_profit_pct').value)    || 15,
+      trailing_stop_pct:  parseFloat(document.getElementById('fp_trailing_stop_pct').value)  || 6,
+    };
+  }
 
   // UI をロック
   const btn = document.getElementById('run-btn');

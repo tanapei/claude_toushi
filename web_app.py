@@ -130,12 +130,15 @@ trade_logger = TradeLogger()
 class ProgressBacktester:
     """進捗をrun_stateに書き込みながらバックテストを実行するラッパー"""
 
-    def __init__(self, start_date, end_date, strategy_params, mode, iterations):
-        self.start_date = start_date
-        self.end_date = end_date
+    def __init__(self, start_date, end_date, strategy_params, mode, iterations,
+                 strategy_mode="classic", factor_params=None):
+        self.start_date      = start_date
+        self.end_date        = end_date
         self.strategy_params = strategy_params
-        self.mode = mode
-        self.iterations = iterations
+        self.mode            = mode
+        self.iterations      = iterations
+        self.strategy_mode   = strategy_mode
+        self.factor_params   = factor_params or {}
 
     def run(self):
         try:
@@ -180,14 +183,20 @@ class ProgressBacktester:
             start_date=self.start_date,
             end_date=self.end_date,
             strategy_params=self.strategy_params,
+            strategy_mode=self.strategy_mode,
+            factor_params=self.factor_params,
         )
         run_state.run_id = backtester.run_id
 
         run_state.update(15, "データ取得中...")
         backtester._load_data()
 
-        run_state.update(30, "テクニカル指標を計算中...")
-        backtester._add_indicators()
+        if self.strategy_mode == "factor":
+            run_state.update(30, "ファクタースコアを計算中（数分かかります）...")
+            backtester._factor_scores = backtester._precompute_factor_scores()
+        else:
+            if self.strategy_mode != "factor":
+            backtester._add_indicators()
 
         run_state.update(40, "シミュレーション実行中...")
 
@@ -258,15 +267,20 @@ class ProgressBacktester:
                 start_date=self.start_date,
                 end_date=self.end_date,
                 strategy_params=params,
+                strategy_mode=self.strategy_mode,
+                factor_params=self.factor_params,
             )
             if i == 1:
                 run_state.run_id = backtester.run_id
 
-            # プリロード済みデータを注入（再ダウンロード不要）
             backtester.set_raw_data(raw_data, nikkei_raw, all_dates)
 
-            run_state.update(base + 2, f"[{i}/{self.iterations}] 指標計算中...")
-            backtester._add_indicators()
+            if self.strategy_mode == "factor":
+                run_state.update(base + 2, f"[{i}/{self.iterations}] ファクタースコア計算中...")
+                backtester._factor_scores = backtester._precompute_factor_scores()
+            else:
+                run_state.update(base + 2, f"[{i}/{self.iterations}] 指標計算中...")
+                backtester._add_indicators()
 
             # シミュレーション（進捗コールバック付き）
             sim_span = end - base - 10
@@ -315,8 +329,10 @@ class ProgressBacktester:
         return results
 
 
-def _worker(start_date, end_date, strategy_params, mode, iterations):
-    pb = ProgressBacktester(start_date, end_date, strategy_params, mode, iterations)
+def _worker(start_date, end_date, strategy_params, mode, iterations,
+            strategy_mode="classic", factor_params=None):
+    pb = ProgressBacktester(start_date, end_date, strategy_params, mode, iterations,
+                            strategy_mode, factor_params or {})
     pb.run()
 
 
@@ -348,10 +364,12 @@ def start_run():
         return jsonify({"error": "既に実行中です"}), 409
 
     data = request.get_json() or {}
-    start_date = data.get("start_date", BACKTEST_START)
-    end_date = data.get("end_date", BACKTEST_END)
-    mode = data.get("mode", "single")
-    iterations = int(data.get("iterations", 3))
+    start_date      = data.get("start_date", BACKTEST_START)
+    end_date        = data.get("end_date",   BACKTEST_END)
+    mode            = data.get("mode",       "single")
+    iterations      = int(data.get("iterations", 3))
+    strategy_mode   = data.get("strategy_mode", "classic")
+    factor_params   = data.get("factor_params", {})
     strategy_params = data.get("strategy_params", STRATEGY_PARAMS.copy())
 
     # 型変換（フロントから文字列で来る可能性）
@@ -364,11 +382,19 @@ def start_run():
             except (ValueError, TypeError):
                 pass
 
+    for k in ("buy_threshold", "stop_loss_pct", "take_profit_pct", "trailing_stop_pct"):
+        if k in factor_params:
+            try:
+                factor_params[k] = float(factor_params[k])
+            except (ValueError, TypeError):
+                pass
+
     run_state.reset()
 
     t = threading.Thread(
         target=_worker,
-        args=(start_date, end_date, strategy_params, mode, iterations),
+        args=(start_date, end_date, strategy_params, mode, iterations,
+              strategy_mode, factor_params),
         daemon=True,
     )
     t.start()

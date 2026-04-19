@@ -353,13 +353,15 @@ _SENSITIVE_KEYS = {"kabu_api_password", "kabu_trade_password",
                    "line_channel_token", "anthropic_api_key"}
 
 _SETTINGS_DEFAULTS = {
-    "kabu_api_base_url":   "http://localhost:18080/kabusapi",
-    "kabu_exchange_code":  1,
-    "kabu_api_password":   "",
-    "kabu_trade_password": "",
-    "line_channel_token":  "",
-    "line_user_id":        "",
-    "anthropic_api_key":   "",
+    "kabu_api_base_url":    "http://localhost:18080/kabusapi",
+    "kabu_exchange_code":   1,
+    "kabu_api_password":    "",
+    "kabu_trade_password":  "",
+    "line_channel_token":   "",
+    "line_user_id":         "",
+    "anthropic_api_key":    "",
+    "trading_mode":         "paper",   # "paper" | "live"
+    "paper_initial_capital": 1000000,
 }
 
 
@@ -508,6 +510,102 @@ def test_line_connection():
         return jsonify({"status": "error", "message": f"送信失敗 ({resp.status_code}): {msg}"})
     except Exception as e:
         return jsonify({"status": "error", "message": f"接続エラー: {str(e)}"})
+
+
+# ─────────────────────────────────────────────
+# ペーパートレード API
+# ─────────────────────────────────────────────
+
+def _get_paper_trader():
+    s = _load_settings()
+    capital = float(s.get("paper_initial_capital", 1_000_000))
+    from trading_system.paper_trader import PaperTrader
+    return PaperTrader(initial_capital=capital)
+
+
+@app.route("/api/paper-trader/status")
+def paper_trader_status():
+    """ペーパーポートフォリオの現在状態を返す。"""
+    try:
+        pt = _get_paper_trader()
+        return jsonify(pt.get_status())
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/paper-trader/run", methods=["POST"])
+def paper_trader_run():
+    """シグナルを取得してペーパートレードを1サイクル実行する。"""
+    try:
+        data_req = request.get_json() or {}
+        market = data_req.get("market", "JP")
+
+        from trading_system.signal_runner import SignalRunner
+        from trading_system.paper_trader import PaperTrader
+
+        s = _load_settings()
+        capital = float(s.get("paper_initial_capital", 1_000_000))
+        pt = PaperTrader(initial_capital=capital)
+
+        # データ取得 & シグナル生成
+        runner = SignalRunner(market=market)
+        price_data = runner._fetch_data(runner.universe)
+        market_bullish = runner._check_market_regime()
+
+        # 1. 損切り・利確チェック（既存ポジション）
+        stopped = pt.check_stops(price_data)
+
+        bought = []
+        if market_bullish:
+            from trading_system.factor_scorer import score_universe
+            scored = score_universe(price_data, market_bullish)
+            available = MAX_POSITIONS - len(pt.positions) + len(stopped)
+            candidates = [s for s in scored
+                          if s["signal"] == "buy"
+                          and not pt.positions.get(s["ticker"])][:max(0, available)]
+
+            for sig in candidates:
+                ticker = sig["ticker"]
+                if ticker not in price_data:
+                    continue
+                price = float(price_data[ticker]["close"].iloc[-1])
+                result = pt.buy(ticker, price, score=sig.get("score", 0), market=market)
+                if result:
+                    bought.append({"ticker": ticker, "price": price, "score": sig.get("score", 0)})
+
+        from trading_system.notifier import send as line_send
+        if bought or stopped:
+            msgs = []
+            for b in bought:
+                msgs.append(f"📈 買い: {b['ticker']} @ ¥{b['price']:,.0f} (スコア{b['score']})")
+            for t in stopped:
+                sign = "✅" if t["pnl"] >= 0 else "🔴"
+                msgs.append(f"{sign} 売り: {t['ticker']}  {t['pnl_pct']:+.1f}%  {t['reason']}")
+            line_send("[ペーパー]\n" + "\n".join(msgs))
+
+        return jsonify({
+            "market_bullish": market_bullish,
+            "bought":  bought,
+            "stopped": stopped,
+            "portfolio": pt.get_status(price_data),
+        })
+    except Exception as e:
+        logger.exception("ペーパートレード実行エラー")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/paper-trader/reset", methods=["POST"])
+def paper_trader_reset():
+    """ペーパーポートフォリオをリセットする。"""
+    try:
+        s = _load_settings()
+        capital = float(s.get("paper_initial_capital", 1_000_000))
+        from trading_system.paper_trader import PaperTrader
+        pt = PaperTrader(initial_capital=capital)
+        pt.reset(capital)
+        return jsonify({"status": "reset", "initial_capital": capital})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/config/defaults")

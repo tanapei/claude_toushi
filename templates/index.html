@@ -43,9 +43,10 @@
 
     <!-- タブ -->
     <div class="settings-tabs">
-      <button class="stab active" data-stab="kabu">kabuステーション® API</button>
-      <button class="stab" data-stab="line">LINE 通知</button>
+      <button class="stab active" data-stab="kabu">kabuステーション®</button>
+      <button class="stab" data-stab="line">LINE</button>
       <button class="stab" data-stab="claude">Claude API</button>
+      <button class="stab" data-stab="mode">取引モード</button>
     </div>
 
     <!-- kabu タブ -->
@@ -103,6 +104,23 @@
         </div>
       </div>
       <p class="sform-note">Claude AIによるシグナル解説・自動改善に使用されます。</p>
+    </div>
+
+    <!-- 取引モード タブ -->
+    <div class="stab-panel" id="stab-mode">
+      <div class="sform-group">
+        <label>取引モード</label>
+        <select id="s-trading-mode" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px 12px;font-size:13px;">
+          <option value="paper">📄 ペーパートレード（仮想資金）</option>
+          <option value="live">💴 ライブトレード（実資金 / kabuステーション®）</option>
+        </select>
+      </div>
+      <div class="sform-group">
+        <label>ペーパー初期資金（円）</label>
+        <input type="number" id="s-paper-capital" min="100000" step="100000" />
+      </div>
+      <p class="sform-note" id="mode-note-paper">仮想資金でシグナルに自動反応します。実際の注文は一切行いません。</p>
+      <p class="sform-note" id="mode-note-live" style="display:none;color:var(--negative);">⚠ 実資金を使用します。kabuステーション®との接続が必要です。</p>
     </div>
 
     <div class="settings-footer">
@@ -564,6 +582,46 @@
   <!-- ─── 自動トレード タブ ─── -->
   <section class="tab-panel" id="panel-autotrader">
     <div class="section-title">🤖 自動トレード ダッシュボード</div>
+
+    <!-- ペーパートレードパネル -->
+    <div id="paper-panel" class="card mb-20">
+      <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;">
+        <span>📄 ペーパートレード（仮想資金）</span>
+        <div style="display:flex;gap:8px">
+          <button class="btn-primary" onclick="runPaperCycle()" style="font-size:12px;padding:5px 14px">▶ 1サイクル実行</button>
+          <button class="btn-secondary" onclick="resetPaperTrader()" style="font-size:12px;padding:5px 14px">🔄 リセット</button>
+        </div>
+      </div>
+      <!-- KPI行 -->
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;padding:16px">
+        <div class="kpi-card"><div class="kpi-label">総資産</div><div class="kpi-value" id="pt-equity">—</div></div>
+        <div class="kpi-card"><div class="kpi-label">リターン</div><div class="kpi-value" id="pt-return">—</div></div>
+        <div class="kpi-card"><div class="kpi-label">現金</div><div class="kpi-value" id="pt-cash">—</div></div>
+        <div class="kpi-card"><div class="kpi-label">勝率</div><div class="kpi-value" id="pt-winrate">—</div></div>
+        <div class="kpi-card"><div class="kpi-label">完了取引</div><div class="kpi-value" id="pt-trades">—</div></div>
+      </div>
+      <!-- 保有ポジション -->
+      <div style="padding:0 16px 8px">
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">■ 保有中ポジション</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>銘柄</th><th>取得日</th><th>取得価格</th><th>現在価格</th><th>損益</th><th>損益%</th></tr></thead>
+            <tbody id="pt-positions"></tbody>
+          </table>
+        </div>
+      </div>
+      <!-- 直近取引履歴 -->
+      <div style="padding:0 16px 16px">
+        <div style="font-size:12px;color:var(--text-muted);margin:12px 0 8px">■ 直近の取引</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>銘柄</th><th>売却日</th><th>損益</th><th>損益%</th><th>理由</th></tr></thead>
+            <tbody id="pt-history"></tbody>
+          </table>
+        </div>
+      </div>
+      <div id="pt-msg" style="padding:8px 16px 12px;font-size:12px;color:var(--text-muted)"></div>
+    </div>
 
     <!-- 稼働状態バナー + 一時停止ボタン -->
     <div id="at-status-banner" style="display:flex;align-items:center;justify-content:space-between;padding:12px 18px;border-radius:10px;margin-bottom:20px;background:var(--surface2);border:1px solid var(--border)">

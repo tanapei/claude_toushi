@@ -1532,6 +1532,98 @@ async function resumeTrader() {
 }
 
 // ─────────────────────────────────────────────
+// ペーパートレード
+// ─────────────────────────────────────────────
+
+async function loadPaperTraderStatus() {
+  try {
+    const res = await fetch("/api/paper-trader/status");
+    const d = await res.json();
+    if (d.error) { document.getElementById("pt-msg").textContent = d.error; return; }
+    _renderPaperStatus(d);
+  } catch (e) { console.error("ペーパー状態取得失敗", e); }
+}
+
+function _renderPaperStatus(d) {
+  const fmt = v => (v >= 0 ? "+" : "") + v.toLocaleString("ja-JP", {maximumFractionDigits: 2});
+  const fmtY = v => "¥" + Math.abs(v).toLocaleString("ja-JP");
+
+  document.getElementById("pt-equity").textContent   = fmtY(d.total_equity);
+  document.getElementById("pt-cash").textContent     = fmtY(d.cash);
+  document.getElementById("pt-trades").textContent   = d.trade_count + "件";
+  document.getElementById("pt-winrate").textContent  = d.win_rate + "%";
+
+  const ret = d.total_return_pct;
+  const retEl = document.getElementById("pt-return");
+  retEl.textContent = (ret >= 0 ? "+" : "") + ret.toFixed(2) + "%";
+  retEl.style.color = ret >= 0 ? "var(--positive)" : "var(--negative)";
+
+  // 保有ポジション
+  const posBody = document.getElementById("pt-positions");
+  if (!d.positions || d.positions.length === 0) {
+    posBody.innerHTML = '<tr><td colspan="6" class="empty">保有なし</td></tr>';
+  } else {
+    posBody.innerHTML = d.positions.map(p => {
+      const pnlColor = p.pnl >= 0 ? "var(--positive)" : "var(--negative)";
+      return `<tr>
+        <td>${p.label || p.ticker}</td>
+        <td>${(p.entry_date || "").slice(0,10)}</td>
+        <td>¥${p.entry_price.toLocaleString("ja-JP")}</td>
+        <td>${p.current_price ? "¥" + p.current_price.toLocaleString("ja-JP") : "—"}</td>
+        <td style="color:${pnlColor}">${p.pnl >= 0 ? "+" : ""}¥${Math.abs(p.pnl).toLocaleString("ja-JP")}</td>
+        <td style="color:${pnlColor}">${p.pnl_pct >= 0 ? "+" : ""}${p.pnl_pct.toFixed(2)}%</td>
+      </tr>`;
+    }).join("");
+  }
+
+  // 直近取引
+  const histBody = document.getElementById("pt-history");
+  if (!d.recent_trades || d.recent_trades.length === 0) {
+    histBody.innerHTML = '<tr><td colspan="5" class="empty">取引なし</td></tr>';
+  } else {
+    histBody.innerHTML = d.recent_trades.map(t => {
+      const c = t.pnl >= 0 ? "var(--positive)" : "var(--negative)";
+      return `<tr>
+        <td>${t.label || t.ticker}</td>
+        <td>${(t.exit_date || "").slice(0,10)}</td>
+        <td style="color:${c}">${t.pnl >= 0 ? "+" : ""}¥${Math.abs(t.pnl).toLocaleString("ja-JP")}</td>
+        <td style="color:${c}">${t.pnl_pct >= 0 ? "+" : ""}${t.pnl_pct.toFixed(2)}%</td>
+        <td style="font-size:11px;color:var(--text-muted)">${t.reason || ""}</td>
+      </tr>`;
+    }).join("");
+  }
+}
+
+async function runPaperCycle() {
+  const msgEl = document.getElementById("pt-msg");
+  msgEl.textContent = "シグナル取得・実行中...（数分かかる場合があります）";
+  try {
+    const res = await fetch("/api/paper-trader/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ market: "JP" }),
+    });
+    const d = await res.json();
+    if (d.error) { msgEl.textContent = "エラー: " + d.error; return; }
+    const bought  = (d.bought  || []).map(b => `買い: ${b.ticker}`).join(", ");
+    const stopped = (d.stopped || []).map(s => `売り: ${s.ticker}`).join(", ");
+    msgEl.textContent = `完了 — ${bought || "買いなし"} / ${stopped || "売りなし"}  (市場: ${d.market_bullish ? "強気" : "弱気"})`;
+    if (d.portfolio) _renderPaperStatus(d.portfolio);
+  } catch (e) {
+    msgEl.textContent = "通信エラー: " + e.message;
+  }
+}
+
+async function resetPaperTrader() {
+  if (!confirm("ペーパーポートフォリオをリセットしますか？\n取引履歴・ポジションがすべて消去されます。")) return;
+  try {
+    await fetch("/api/paper-trader/reset", { method: "POST" });
+    await loadPaperTraderStatus();
+    document.getElementById("pt-msg").textContent = "リセット完了";
+  } catch (e) { alert("リセット失敗: " + e.message); }
+}
+
+// ─────────────────────────────────────────────
 // 設定モーダル
 // ─────────────────────────────────────────────
 
@@ -1573,20 +1665,31 @@ async function _loadSettingsIntoForm() {
     document.getElementById("s-line-token").value     = has.line_channel_token  ? "●●●●●●●●" : "";
     document.getElementById("s-line-uid").value       = s.line_user_id || "";
     document.getElementById("s-anthropic-key").value  = has.anthropic_api_key   ? "●●●●●●●●" : "";
+    document.getElementById("s-trading-mode").value   = s.trading_mode || "paper";
+    document.getElementById("s-paper-capital").value  = s.paper_initial_capital || 1000000;
+    _updateModeNote(s.trading_mode || "paper");
+    document.getElementById("s-trading-mode").onchange = e => _updateModeNote(e.target.value);
   } catch (e) {
     console.error("設定の読み込みエラー:", e);
   }
 }
 
+function _updateModeNote(mode) {
+  document.getElementById("mode-note-paper").style.display = mode === "paper" ? "" : "none";
+  document.getElementById("mode-note-live").style.display  = mode === "live"  ? "" : "none";
+}
+
 async function saveSettings() {
   const payload = {
-    kabu_api_base_url:   document.getElementById("s-kabu-url").value.trim(),
-    kabu_exchange_code:  parseInt(document.getElementById("s-kabu-exchange").value) || 1,
-    kabu_api_password:   document.getElementById("s-kabu-pw").value,
-    kabu_trade_password: document.getElementById("s-kabu-trade-pw").value,
-    line_channel_token:  document.getElementById("s-line-token").value,
-    line_user_id:        document.getElementById("s-line-uid").value.trim(),
-    anthropic_api_key:   document.getElementById("s-anthropic-key").value,
+    kabu_api_base_url:    document.getElementById("s-kabu-url").value.trim(),
+    kabu_exchange_code:   parseInt(document.getElementById("s-kabu-exchange").value) || 1,
+    kabu_api_password:    document.getElementById("s-kabu-pw").value,
+    kabu_trade_password:  document.getElementById("s-kabu-trade-pw").value,
+    line_channel_token:   document.getElementById("s-line-token").value,
+    line_user_id:         document.getElementById("s-line-uid").value.trim(),
+    anthropic_api_key:    document.getElementById("s-anthropic-key").value,
+    trading_mode:         document.getElementById("s-trading-mode").value,
+    paper_initial_capital:parseInt(document.getElementById("s-paper-capital").value) || 1000000,
   };
   try {
     await fetch("/api/settings", {
@@ -1651,5 +1754,6 @@ loadAutoTraderData = async function () {
     _origLoadAutoTraderData(),
     loadTraderStatus(),
     loadAtEquityChart(),
+    loadPaperTraderStatus(),
   ]);
 };

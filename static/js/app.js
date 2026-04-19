@@ -1531,6 +1531,103 @@ async function resumeTrader() {
   }
 }
 
+// ─────────────────────────────────────────────
+// 設定モーダル
+// ─────────────────────────────────────────────
+
+async function openSettings() {
+  document.getElementById("settings-overlay").classList.add("open");
+  document.getElementById("settings-save-msg").textContent = "";
+  document.getElementById("kabu-test-result").textContent = "";
+  await _loadSettingsIntoForm();
+}
+
+function closeSettings() {
+  document.getElementById("settings-overlay").classList.remove("open");
+}
+
+function closeSettingsIfOutside(e) {
+  if (e.target === document.getElementById("settings-overlay")) closeSettings();
+}
+
+// 設定タブ切り替え
+document.querySelectorAll(".stab").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".stab").forEach(b => b.classList.remove("active"));
+    document.querySelectorAll(".stab-panel").forEach(p => p.classList.remove("active"));
+    btn.classList.add("active");
+    document.getElementById("stab-" + btn.dataset.stab).classList.add("active");
+  });
+});
+
+async function _loadSettingsIntoForm() {
+  try {
+    const res = await fetch("/api/settings");
+    const s = await res.json();
+    const has = s._has_value || {};
+
+    document.getElementById("s-kabu-url").value       = s.kabu_api_base_url || "";
+    document.getElementById("s-kabu-exchange").value  = s.kabu_exchange_code || 1;
+    document.getElementById("s-kabu-pw").value        = has.kabu_api_password   ? "●●●●●●●●" : "";
+    document.getElementById("s-kabu-trade-pw").value  = has.kabu_trade_password ? "●●●●●●●●" : "";
+    document.getElementById("s-line-token").value     = has.line_channel_token  ? "●●●●●●●●" : "";
+    document.getElementById("s-line-uid").value       = s.line_user_id || "";
+    document.getElementById("s-anthropic-key").value  = has.anthropic_api_key   ? "●●●●●●●●" : "";
+  } catch (e) {
+    console.error("設定の読み込みエラー:", e);
+  }
+}
+
+async function saveSettings() {
+  const payload = {
+    kabu_api_base_url:   document.getElementById("s-kabu-url").value.trim(),
+    kabu_exchange_code:  parseInt(document.getElementById("s-kabu-exchange").value) || 1,
+    kabu_api_password:   document.getElementById("s-kabu-pw").value,
+    kabu_trade_password: document.getElementById("s-kabu-trade-pw").value,
+    line_channel_token:  document.getElementById("s-line-token").value,
+    line_user_id:        document.getElementById("s-line-uid").value.trim(),
+    anthropic_api_key:   document.getElementById("s-anthropic-key").value,
+  };
+  try {
+    await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const msg = document.getElementById("settings-save-msg");
+    msg.textContent = "✓ 保存しました";
+    setTimeout(() => { msg.textContent = ""; closeSettings(); }, 1200);
+  } catch (e) {
+    document.getElementById("settings-save-msg").textContent = "保存に失敗しました";
+  }
+}
+
+async function testKabuConnection() {
+  const el = document.getElementById("kabu-test-result");
+  el.textContent = "接続中...";
+  el.className = "test-result";
+  try {
+    const res = await fetch("/api/settings/test_kabu", { method: "POST" });
+    const data = await res.json();
+    el.textContent = data.message;
+    el.className = "test-result " + (data.status === "ok" ? "ok" : "err");
+  } catch (e) {
+    el.textContent = "通信エラー";
+    el.className = "test-result err";
+  }
+}
+
+function togglePwd(id, btn) {
+  const inp = document.getElementById(id);
+  if (inp.type === "password") {
+    inp.type = "text";
+    btn.textContent = "🙈";
+  } else {
+    inp.type = "password";
+    btn.textContent = "👁";
+  }
+}
+
 // loadAutoTraderData に追加ロードを組み込む（上書き）
 const _origLoadAutoTraderData = loadAutoTraderData;
 loadAutoTraderData = async function () {

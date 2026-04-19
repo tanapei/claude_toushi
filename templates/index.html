@@ -29,8 +29,87 @@
       <button class="tab" data-tab="trades"       role="tab">取引履歴</button>
       <button class="tab" data-tab="analysis"     role="tab">AI 分析</button>
     </nav>
+    <button class="settings-btn" onclick="openSettings()" title="設定">⚙</button>
   </div>
 </header>
+
+<!-- ─── 設定モーダル ─── -->
+<div id="settings-overlay" class="settings-overlay" onclick="closeSettingsIfOutside(event)">
+  <div class="settings-modal" role="dialog" aria-modal="true" aria-label="設定">
+    <div class="settings-header">
+      <span>⚙ 設定</span>
+      <button class="settings-close" onclick="closeSettings()">✕</button>
+    </div>
+
+    <!-- タブ -->
+    <div class="settings-tabs">
+      <button class="stab active" data-stab="kabu">kabuステーション® API</button>
+      <button class="stab" data-stab="line">LINE 通知</button>
+      <button class="stab" data-stab="claude">Claude API</button>
+    </div>
+
+    <!-- kabu タブ -->
+    <div class="stab-panel active" id="stab-kabu">
+      <div class="sform-group">
+        <label>APIベースURL</label>
+        <input type="text" id="s-kabu-url" placeholder="http://localhost:18080/kabusapi" />
+      </div>
+      <div class="sform-group">
+        <label>取引所コード <small>（1=東証）</small></label>
+        <input type="number" id="s-kabu-exchange" min="1" max="9" />
+      </div>
+      <div class="sform-group">
+        <label>APIパスワード</label>
+        <div class="pwd-row">
+          <input type="password" id="s-kabu-pw" placeholder="未設定" autocomplete="off" />
+          <button class="eye-btn" onclick="togglePwd('s-kabu-pw',this)">👁</button>
+        </div>
+      </div>
+      <div class="sform-group">
+        <label>取引パスワード</label>
+        <div class="pwd-row">
+          <input type="password" id="s-kabu-trade-pw" placeholder="未設定" autocomplete="off" />
+          <button class="eye-btn" onclick="togglePwd('s-kabu-trade-pw',this)">👁</button>
+        </div>
+      </div>
+      <button class="test-btn" onclick="testKabuConnection()">接続テスト</button>
+      <div id="kabu-test-result" class="test-result"></div>
+    </div>
+
+    <!-- LINE タブ -->
+    <div class="stab-panel" id="stab-line">
+      <div class="sform-group">
+        <label>チャンネルアクセストークン</label>
+        <div class="pwd-row">
+          <input type="password" id="s-line-token" placeholder="未設定" autocomplete="off" />
+          <button class="eye-btn" onclick="togglePwd('s-line-token',this)">👁</button>
+        </div>
+      </div>
+      <div class="sform-group">
+        <label>通知先ユーザーID <small>（Uから始まる文字列）</small></label>
+        <input type="text" id="s-line-uid" placeholder="U..." autocomplete="off" />
+      </div>
+    </div>
+
+    <!-- Claude API タブ -->
+    <div class="stab-panel" id="stab-claude">
+      <div class="sform-group">
+        <label>Anthropic API キー</label>
+        <div class="pwd-row">
+          <input type="password" id="s-anthropic-key" placeholder="未設定" autocomplete="off" />
+          <button class="eye-btn" onclick="togglePwd('s-anthropic-key',this)">👁</button>
+        </div>
+      </div>
+      <p class="sform-note">Claude AIによるシグナル解説・自動改善に使用されます。</p>
+    </div>
+
+    <div class="settings-footer">
+      <span id="settings-save-msg" class="save-msg"></span>
+      <button class="btn-cancel" onclick="closeSettings()">キャンセル</button>
+      <button class="btn-save" onclick="saveSettings()">保存</button>
+    </div>
+  </div>
+</div>
 
 <!-- メインコンテンツ -->
 <main class="main">

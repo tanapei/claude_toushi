@@ -347,9 +347,119 @@ def _worker(start_date, end_date, strategy_params, mode, iterations,
 # API ルート
 # ─────────────────────────────────────────────
 
+# settings.json の保存先（gitignore対象）
+_SETTINGS_FILE = Path(__file__).parent / "settings.json"
+_SENSITIVE_KEYS = {"kabu_api_password", "kabu_trade_password",
+                   "line_channel_token", "anthropic_api_key"}
+
+_SETTINGS_DEFAULTS = {
+    "kabu_api_base_url":   "http://localhost:18080/kabusapi",
+    "kabu_exchange_code":  1,
+    "kabu_api_password":   "",
+    "kabu_trade_password": "",
+    "line_channel_token":  "",
+    "line_user_id":        "",
+    "anthropic_api_key":   "",
+}
+
+
+def _load_settings() -> dict:
+    """settings.json を読み込み、環境変数へ反映する。"""
+    s = _SETTINGS_DEFAULTS.copy()
+    if _SETTINGS_FILE.exists():
+        try:
+            s.update(json.loads(_SETTINGS_FILE.read_text(encoding="utf-8")))
+        except Exception:
+            pass
+    # 環境変数に反映（既存の環境変数は上書きしない）
+    env_map = {
+        "kabu_api_password":   "KABU_API_PASSWORD",
+        "kabu_trade_password": "KABU_TRADE_PASSWORD",
+        "line_channel_token":  "LINE_CHANNEL_ACCESS_TOKEN",
+        "line_user_id":        "LINE_USER_ID",
+        "anthropic_api_key":   "ANTHROPIC_API_KEY",
+    }
+    for key, env in env_map.items():
+        if s.get(key) and not os.environ.get(env):
+            os.environ[env] = s[key]
+    return s
+
+
+def _save_settings(new_values: dict) -> dict:
+    """settings.json に保存し、環境変数を即時反映する。"""
+    current = _load_settings()
+    current.update({k: v for k, v in new_values.items() if k in _SETTINGS_DEFAULTS})
+    _SETTINGS_FILE.write_text(
+        json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    # 環境変数を即時更新
+    env_map = {
+        "kabu_api_password":   "KABU_API_PASSWORD",
+        "kabu_trade_password": "KABU_TRADE_PASSWORD",
+        "line_channel_token":  "LINE_CHANNEL_ACCESS_TOKEN",
+        "line_user_id":        "LINE_USER_ID",
+        "anthropic_api_key":   "ANTHROPIC_API_KEY",
+    }
+    for key, env in env_map.items():
+        if key in new_values:
+            os.environ[env] = new_values[key]
+    return current
+
+
+# 起動時に設定をロード
+_load_settings()
+
+
 @app.route("/")
 def index():
     return render_template("index.html")
+
+
+@app.route("/api/settings", methods=["GET"])
+def get_settings():
+    """現在の設定を返す（センシティブ項目はマスク）。"""
+    s = _load_settings()
+    masked = {}
+    for k, v in s.items():
+        if k in _SENSITIVE_KEYS and v:
+            masked[k] = "●" * 8  # マスク表示
+        else:
+            masked[k] = v
+    masked["_has_value"] = {k: bool(s.get(k)) for k in _SENSITIVE_KEYS}
+    return jsonify(masked)
+
+
+@app.route("/api/settings", methods=["POST"])
+def save_settings():
+    """設定を保存する。空文字で送られた場合は既存値を維持する。"""
+    data = request.get_json() or {}
+    current = _load_settings()
+    merged = {}
+    for k in _SETTINGS_DEFAULTS:
+        if k in data:
+            # センシティブ項目: マスク値が来た場合は既存値を維持
+            if k in _SENSITIVE_KEYS and data[k].startswith("●"):
+                merged[k] = current.get(k, "")
+            else:
+                merged[k] = data[k]
+        else:
+            merged[k] = current.get(k, _SETTINGS_DEFAULTS[k])
+    _save_settings(merged)
+    return jsonify({"status": "saved"})
+
+
+@app.route("/api/settings/test_kabu", methods=["POST"])
+def test_kabu_connection():
+    """kabuステーション® APIへの接続テストを行う。"""
+    try:
+        from trading_system.kabu_client import KabuClient
+        client = KabuClient()
+        token = client.get_token()
+        if token:
+            return jsonify({"status": "ok", "message": "接続成功 — トークン取得完了"})
+        return jsonify({"status": "error", "message": "トークン取得失敗（パスワードを確認してください）"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"接続エラー: {str(e)}"})
 
 
 @app.route("/api/config/defaults")

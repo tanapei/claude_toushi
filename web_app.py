@@ -451,23 +451,28 @@ def save_settings():
 @app.route("/api/settings/test_kabu", methods=["POST"])
 def test_kabu_connection():
     """kabuステーション® APIへの接続テストを行う。"""
+    import requests as _req
+    s = _load_settings()
+    base_url = (s.get("kabu_api_base_url") or "http://localhost:18080/kabusapi").rstrip("/")
+    password = s.get("kabu_api_password", "")
+    if not password:
+        return jsonify({"status": "error", "message": "APIパスワードが未設定です"})
     try:
-        # 保存済み設定を環境変数に反映してからクライアントを生成
-        s = _load_settings()
-        if s.get("kabu_api_password"):
-            os.environ["KABU_API_PASSWORD"] = s["kabu_api_password"]
-        if s.get("kabu_api_base_url"):
-            os.environ.setdefault("KABU_API_BASE_URL", s["kabu_api_base_url"])
-
-        import importlib
-        import trading_system.kabu_client as _kc
-        importlib.reload(_kc)          # 環境変数更新後にリロード
-
-        client = _kc.KabuClient()
-        token = client._refresh_token()
-        if token:
-            return jsonify({"status": "ok", "message": "接続成功 — トークン取得完了"})
-        return jsonify({"status": "error", "message": "トークン取得失敗（パスワードを確認してください）"})
+        resp = _req.post(
+            f"{base_url}/token",
+            json={"APIPassword": password},
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            token = resp.json().get("Token", "")
+            if token:
+                return jsonify({"status": "ok", "message": "接続成功 — トークン取得完了"})
+        return jsonify({
+            "status": "error",
+            "message": f"トークン取得失敗 ({resp.status_code}): {resp.text}",
+        })
+    except _req.exceptions.ConnectionError:
+        return jsonify({"status": "error", "message": "接続できません。kabuステーション®が起動・ログイン済みか確認してください"})
     except Exception as e:
         return jsonify({"status": "error", "message": f"接続エラー: {str(e)}"})
 

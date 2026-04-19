@@ -1602,6 +1602,22 @@ async function saveSettings() {
   }
 }
 
+async function testLineConnection() {
+  const el = document.getElementById("line-test-result");
+  el.textContent = "送信中...";
+  el.className = "test-result";
+  await saveSettings();  // 入力中の値を先に保存してから送信
+  try {
+    const res = await fetch("/api/settings/test_line", { method: "POST" });
+    const data = await res.json();
+    el.textContent = data.message;
+    el.className = "test-result " + (data.status === "ok" ? "ok" : "err");
+  } catch (e) {
+    el.textContent = "通信エラー";
+    el.className = "test-result err";
+  }
+}
+
 async function testKabuConnection() {
   const el = document.getElementById("kabu-test-result");
   el.textContent = "接続中...";

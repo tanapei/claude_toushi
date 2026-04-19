@@ -477,6 +477,39 @@ def test_kabu_connection():
         return jsonify({"status": "error", "message": f"接続エラー: {str(e)}"})
 
 
+@app.route("/api/settings/test_line", methods=["POST"])
+def test_line_connection():
+    """LINE Messaging APIへの接続テストを行う（テストメッセージを送信）。"""
+    import requests as _req
+    s = _load_settings()
+    token   = s.get("line_channel_token", "")
+    user_id = s.get("line_user_id", "")
+    if not token:
+        return jsonify({"status": "error", "message": "チャンネルアクセストークンが未設定です"})
+    if not user_id:
+        return jsonify({"status": "error", "message": "通知先ユーザーIDが未設定です"})
+    try:
+        resp = _req.post(
+            "https://api.line.me/v2/bot/message/push",
+            headers={
+                "Content-Type":  "application/json",
+                "Authorization": f"Bearer {token}",
+            },
+            json={
+                "to": user_id,
+                "messages": [{"type": "text", "text": "✅ Claude株式取引システム — LINE通知の接続テストです。正常に受信できています。"}],
+            },
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            return jsonify({"status": "ok", "message": "送信成功 — LINEを確認してください"})
+        body = resp.json()
+        msg  = body.get("message", resp.text)
+        return jsonify({"status": "error", "message": f"送信失敗 ({resp.status_code}): {msg}"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"接続エラー: {str(e)}"})
+
+
 @app.route("/api/config/defaults")
 def get_defaults():
     """デフォルト設定を返す"""

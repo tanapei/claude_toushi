@@ -596,12 +596,14 @@
       <button class="btn-secondary" onclick="openSettings()" style="font-size:12px;padding:5px 16px;white-space:nowrap">⚙ モード変更</button>
     </div>
 
-    <!-- 稼働状態バナー + 操作ボタン（モードにより変化） -->
+    <!-- 稼働状態バナー + 操作ボタン -->
     <div id="at-status-banner" style="display:flex;align-items:center;justify-content:space-between;padding:12px 18px;border-radius:10px;margin-bottom:8px;background:var(--surface2);border:1px solid var(--border)">
-      <div>
-        <span id="at-status-dot" style="display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:8px;background:var(--positive)"></span>
-        <span id="at-status-label" style="font-weight:600;font-size:14px">稼働中</span>
-        <span style="font-size:12px;color:var(--text-muted);margin-left:10px">（local_trader.py が稼働している場合のみ有効）</span>
+      <div style="display:flex;align-items:center;gap:10px">
+        <span id="at-status-dot" style="display:inline-block;width:12px;height:12px;border-radius:50%;background:#888;flex-shrink:0"></span>
+        <div>
+          <span id="at-status-label" style="font-weight:600;font-size:14px">確認中...</span>
+          <div id="at-status-sub" style="font-size:11px;color:var(--text-muted);margin-top:2px"></div>
+        </div>
       </div>
       <div style="display:flex;gap:8px;align-items:center">
         <!-- ペーパーモード専用ボタン -->
@@ -609,8 +611,10 @@
           <button class="btn-primary" onclick="runPaperCycle()" style="font-size:12px;padding:5px 14px">▶ 1サイクル実行</button>
           <button class="btn-secondary" onclick="resetPaperTrader()" style="font-size:12px;padding:5px 14px">🔄 リセット</button>
         </div>
-        <button id="at-pause-btn" class="btn-secondary" onclick="pauseTrader()" style="font-size:13px;padding:6px 16px">⏸ 一時停止</button>
-        <button id="at-resume-btn" class="btn-primary" onclick="resumeTrader()" style="font-size:13px;padding:6px 16px;display:none">▶ 再開</button>
+        <button id="at-start-btn"  class="btn-primary"    onclick="startTrader()"  style="font-size:13px;padding:6px 16px;display:none">▶ 起動</button>
+        <button id="at-stop-btn"   class="btn-danger"     onclick="stopTrader()"   style="font-size:13px;padding:6px 16px;display:none">⏹ 停止</button>
+        <button id="at-pause-btn"  class="btn-secondary"  onclick="pauseTrader()"  style="font-size:13px;padding:6px 16px;display:none">⏸ 一時停止</button>
+        <button id="at-resume-btn" class="btn-primary"    onclick="resumeTrader()" style="font-size:13px;padding:6px 16px;display:none">▶ 再開</button>
       </div>
     </div>
     <div id="pt-msg" style="min-height:18px;padding:2px 4px 10px;font-size:12px;color:var(--text-muted)"></div>
@@ -676,13 +680,14 @@
       <div style="font-size:13px;line-height:2.4;color:var(--text-muted)">
         <div id="at-guide-paper">
           <p><strong style="color:var(--text)">ペーパーモード（現在）</strong> — kabuステーション® 不要</p>
-          <p><strong style="color:var(--text)">①</strong> PC上で <code>python local_trader.py</code> を実行するだけで仮想売買が自動開始</p>
-          <p style="font-size:12px">平日 09:00 シグナル生成・仮想発注 / 5分ごと 損切り監視 / 15:30 引け後分析</p>
+          <p><strong style="color:var(--text)">①</strong> <code>python web_app.py</code> を起動すると自動トレーダーも同時に起動します</p>
+          <p><strong style="color:var(--text)">②</strong> 停止したい場合は上の「⏹ 停止」ボタンを押してください</p>
+          <p style="font-size:12px">平日 08:30 ニュース分析LINE通知 / 08:50 注目銘柄LINE通知 / 09:00 シグナル生成・仮想発注 / 5分ごと 損切り監視 / 15:30 引け後分析</p>
         </div>
         <div id="at-guide-live" style="display:none">
           <p><strong style="color:var(--text)">①</strong> kabuステーション® を起動・ログイン済みにする</p>
           <p><strong style="color:var(--text)">②</strong> <code>.env</code> に <code>KABU_API_PASSWORD</code> と <code>KABU_TRADE_PASSWORD</code> を設定</p>
-          <p><strong style="color:var(--text)">③</strong> PC上で <code>python local_trader.py</code> を実行</p>
+          <p><strong style="color:var(--text)">③</strong> <code>python web_app.py</code> を起動すると自動トレーダーも同時に起動します</p>
           <p><strong style="color:var(--text)">④</strong> 平日 09:00 JST に自動で銘柄選定・発注が始まります</p>
         </div>
         <p style="margin-top:8px;font-size:12px">

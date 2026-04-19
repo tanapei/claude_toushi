@@ -1677,40 +1677,76 @@ async function loadTraderStatus() {
   try {
     const res  = await fetch('/api/trader/status');
     const data = await res.json();
-    _applyTraderStatus(data.paused);
+    _applyTraderStatus(data.status, data.pid);
   } catch (e) {
     console.warn('トレーダー状態取得失敗:', e);
   }
 }
 
-function _applyTraderStatus(paused) {
+function _applyTraderStatus(status, pid) {
   const dot    = document.getElementById('at-status-dot');
   const label  = document.getElementById('at-status-label');
-  const pause  = document.getElementById('at-pause-btn');
-  const resume = document.getElementById('at-resume-btn');
+  const sub    = document.getElementById('at-status-sub');
+  const btnStart  = document.getElementById('at-start-btn');
+  const btnStop   = document.getElementById('at-stop-btn');
+  const btnPause  = document.getElementById('at-pause-btn');
+  const btnResume = document.getElementById('at-resume-btn');
 
-  if (paused) {
-    dot.style.background   = 'var(--warning, #f5a623)';
-    label.textContent      = '⏸ 一時停止中';
-    label.style.color      = 'var(--warning, #f5a623)';
-    pause.style.display    = 'none';
-    resume.style.display   = '';
+  // すべて非表示にしてから必要なものだけ表示
+  [btnStart, btnStop, btnPause, btnResume].forEach(b => { if(b) b.style.display = 'none'; });
+
+  if (status === 'stopped') {
+    dot.style.background = '#888';
+    label.textContent    = '⏹ 停止中';
+    label.style.color    = 'var(--text-muted)';
+    sub.textContent      = '「▶ 起動」ボタンで自動トレーダーを開始できます';
+    if (btnStart) btnStart.style.display = '';
+  } else if (status === 'paused') {
+    dot.style.background = 'var(--warning, #f5a623)';
+    label.textContent    = '⏸ 一時停止中';
+    label.style.color    = 'var(--warning, #f5a623)';
+    sub.textContent      = pid ? `PID: ${pid} — スケジュール実行を一時停止しています` : '';
+    if (btnStop)   btnStop.style.display   = '';
+    if (btnResume) btnResume.style.display = '';
   } else {
-    dot.style.background   = 'var(--positive)';
-    label.textContent      = '▶ 稼働中';
-    label.style.color      = 'var(--positive)';
-    pause.style.display    = '';
-    resume.style.display   = 'none';
+    dot.style.background = 'var(--positive)';
+    label.textContent    = '▶ 稼働中';
+    label.style.color    = 'var(--positive)';
+    sub.textContent      = pid ? `PID: ${pid} — 平日の取引時間にシグナル生成・自動売買を実行します` : '';
+    if (btnStop)  btnStop.style.display  = '';
+    if (btnPause) btnPause.style.display = '';
+  }
+}
+
+async function startTrader() {
+  try {
+    const res  = await fetch('/api/trader/start', { method: 'POST' });
+    const data = await res.json();
+    if (data.status === 'running') {
+      _applyTraderStatus('running', data.pid);
+    } else {
+      alert(`起動失敗: ${data.message || '不明なエラー'}`);
+    }
+  } catch (e) {
+    alert(`エラー: ${e.message}`);
+  }
+}
+
+async function stopTrader() {
+  if (!confirm('自動トレーダーを停止しますか？\n（スケジュール実行が完全に停止します）')) return;
+  try {
+    await fetch('/api/trader/stop', { method: 'POST' });
+    _applyTraderStatus('stopped', null);
+  } catch (e) {
+    alert(`エラー: ${e.message}`);
   }
 }
 
 async function pauseTrader() {
-  if (!confirm('自動取引を一時停止しますか？\n（進行中の監視は停止しますが、改善分析は続きます）')) return;
+  if (!confirm('自動取引を一時停止しますか？\n（スケジュールは一時停止しますが、プロセスは続きます）')) return;
   try {
-    const res  = await fetch('/api/trader/pause', { method: 'POST' });
-    const data = await res.json();
-    _applyTraderStatus(true);
-    alert('一時停止しました。再開するには「再開」ボタンを押してください。');
+    await fetch('/api/trader/pause', { method: 'POST' });
+    await loadTraderStatus();
   } catch (e) {
     alert(`エラー: ${e.message}`);
   }
@@ -1718,10 +1754,8 @@ async function pauseTrader() {
 
 async function resumeTrader() {
   try {
-    const res  = await fetch('/api/trader/resume', { method: 'POST' });
-    const data = await res.json();
-    _applyTraderStatus(false);
-    alert('自動取引を再開しました。次の取引時間から有効です。');
+    await fetch('/api/trader/resume', { method: 'POST' });
+    await loadTraderStatus();
   } catch (e) {
     alert(`エラー: ${e.message}`);
   }

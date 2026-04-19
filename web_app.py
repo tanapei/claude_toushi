@@ -7,6 +7,8 @@ import json
 import logging
 import os
 import queue
+import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -50,6 +52,60 @@ logging.basicConfig(
     handlers=_log_handlers,
 )
 logger = logging.getLogger(__name__)
+
+# ─────────────────────────────────────────────
+# 自動トレーダー プロセス管理
+# ─────────────────────────────────────────────
+
+_trader_process: Optional[subprocess.Popen] = None
+_trader_lock = threading.Lock()
+
+
+def _trader_script() -> Path:
+    return Path(__file__).parent / "local_trader.py"
+
+
+def _is_trader_running() -> bool:
+    return _trader_process is not None and _trader_process.poll() is None
+
+
+def _start_trader_process() -> dict:
+    global _trader_process
+    with _trader_lock:
+        if _is_trader_running():
+            return {"ok": True, "already": True, "pid": _trader_process.pid}
+        script = _trader_script()
+        if not script.exists():
+            return {"ok": False, "error": "local_trader.py が見つかりません"}
+        try:
+            _trader_process = subprocess.Popen(
+                [sys.executable, str(script)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            logger.info(f"自動トレーダー起動 PID={_trader_process.pid}")
+            return {"ok": True, "pid": _trader_process.pid}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+
+def _stop_trader_process() -> dict:
+    global _trader_process
+    with _trader_lock:
+        if not _is_trader_running():
+            return {"ok": True, "already_stopped": True}
+        try:
+            _trader_process.terminate()
+            _trader_process.wait(timeout=5)
+        except Exception:
+            try:
+                _trader_process.kill()
+            except Exception:
+                pass
+        _trader_process = None
+        logger.info("自動トレーダー停止")
+        return {"ok": True}
+
 
 # ─────────────────────────────────────────────
 # グローバル状態管理
@@ -1162,9 +1218,33 @@ def _pause_flag_path():
 
 @app.route("/api/trader/status")
 def get_trader_status():
-    """自動取引の現在の状態（稼働中 / 一時停止中）を返す。"""
-    paused = _pause_flag_path().exists()
-    return jsonify({"paused": paused, "status": "paused" if paused else "running"})
+    """自動取引の現在の状態を返す。"""
+    running = _is_trader_running()
+    paused  = _pause_flag_path().exists()
+    pid     = _trader_process.pid if running else None
+    if not running:
+        status = "stopped"
+    elif paused:
+        status = "paused"
+    else:
+        status = "running"
+    return jsonify({"running": running, "paused": paused, "status": status, "pid": pid})
+
+
+@app.route("/api/trader/start", methods=["POST"])
+def start_trader():
+    """自動トレーダーを起動する。"""
+    result = _start_trader_process()
+    if result["ok"]:
+        return jsonify({"status": "running", "pid": result.get("pid")})
+    return jsonify({"status": "error", "message": result.get("error")}), 500
+
+
+@app.route("/api/trader/stop", methods=["POST"])
+def stop_trader():
+    """自動トレーダーを停止する。"""
+    result = _stop_trader_process()
+    return jsonify({"status": "stopped"})
 
 
 @app.route("/api/trader/pause", methods=["POST"])
@@ -1194,6 +1274,7 @@ def resume_trader():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
+    _start_trader_process()  # 自動トレーダーをバックグラウンドで自動起動
     print(f"\n株式取引シミュレーション UI 起動中...")
     print(f"ブラウザで http://localhost:{port} を開いてください\n")
     app.run(host="0.0.0.0", port=port, debug=False, threaded=True)

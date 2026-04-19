@@ -51,79 +51,81 @@
       </div>
     </div>
 
-    <!-- Zone 2: 選択セッションの KPI（動的生成） -->
-    <div class="db-kpi-row" id="db-kpi-row"></div>
+    <!-- Zone 2: KPI カード（主要指標 + 補足指標） -->
+    <div id="db-kpi-row" class="db-kpi-row"></div>
 
-    <!-- Zone 3: チャート（左）＋ 取引テーブル（右） -->
-    <div class="db-main-grid" id="db-main-grid" style="display:none">
+    <!-- Zone 3: 全幅チャートエリア（セッション選択後に表示） -->
+    <div id="db-main-grid" style="display:none">
 
-      <!-- 左: 資産推移 + ドローダウン -->
-      <div class="db-chart-pane">
-        <div class="card">
-          <div class="card-header">
-            <span>資産推移チャート</span>
-            <div class="db-chart-legend">
-              <span class="db-legend-buy">▲ 買いエントリー</span>
-              <span class="db-legend-sell">▼ 売りエグジット</span>
-            </div>
-          </div>
-          <div style="position:relative;height:300px">
-            <canvas id="equity-chart"></canvas>
+      <!-- 資産推移チャート（全幅） -->
+      <div class="card mb-16">
+        <div class="card-header">
+          <span>資産推移チャート</span>
+          <div class="db-chart-legend">
+            <span class="db-legend-buy">▲ 買いエントリー</span>
+            <span class="db-legend-sell">▼ 売りエグジット</span>
           </div>
         </div>
-        <div class="card mt-12">
-          <div class="card-header">ドローダウン（%）</div>
-          <div style="position:relative;height:110px">
-            <canvas id="drawdown-chart"></canvas>
-          </div>
+        <div style="position:relative;height:360px">
+          <canvas id="equity-chart"></canvas>
         </div>
       </div>
 
-      <!-- 右: 取引一覧 -->
-      <div class="db-trades-pane">
-        <div class="card db-trades-card">
-          <div class="card-header">
-            <span>取引一覧 <span id="db-trade-count" class="db-trade-count"></span></span>
+      <!-- ドローダウン（全幅・コンパクト） -->
+      <div class="card mb-16">
+        <div class="card-header">ドローダウン（%）</div>
+        <div style="position:relative;height:100px">
+          <canvas id="drawdown-chart"></canvas>
+        </div>
+      </div>
+
+      <!-- 取引一覧（全幅） -->
+      <div class="card mb-16">
+        <div class="card-header">
+          <span>取引一覧 <span id="db-trade-count" class="db-trade-count"></span></span>
+          <div style="display:flex;align-items:center;gap:10px">
+            <span style="font-size:11px;color:var(--text-muted)">売却理由:</span>
             <select id="db-reason-filter" class="select-sm" onchange="filterDbTrades()">
-              <option value="">すべての理由</option>
+              <option value="">すべて</option>
             </select>
           </div>
-          <div class="db-trades-scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>銘柄</th>
-                  <th>エントリー</th>
-                  <th>エグジット</th>
-                  <th>日数</th>
-                  <th>損益%</th>
-                  <th>損益円</th>
-                  <th>理由</th>
-                </tr>
-              </thead>
-              <tbody id="db-trades-tbody">
-                <tr><td colspan="7" class="empty">—</td></tr>
-              </tbody>
-            </table>
-          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="db-trades-table">
+            <thead>
+              <tr>
+                <th>銘柄</th>
+                <th class="col-center">エントリー</th>
+                <th class="col-center">エグジット</th>
+                <th class="col-right">保有</th>
+                <th class="col-right">損益%</th>
+                <th class="col-right">損益円</th>
+                <th>売却理由</th>
+              </tr>
+            </thead>
+            <tbody id="db-trades-tbody">
+              <tr><td colspan="7" class="empty">—</td></tr>
+            </tbody>
+          </table>
         </div>
       </div>
+
     </div>
 
     <!-- Zone 4: セッション比較（折りたたみ） -->
-    <details class="db-compare-details mt-20" id="db-compare-details">
+    <details class="db-compare-details" id="db-compare-details">
       <summary>📊 過去セッション比較</summary>
-      <div class="table-wrap" style="margin-top:12px">
+      <div class="table-wrap" style="padding:0 20px 16px">
         <table>
           <thead>
             <tr>
               <th>期間</th>
-              <th>リターン</th>
-              <th>勝率</th>
-              <th>シャープ</th>
-              <th>最大DD</th>
-              <th>PF</th>
-              <th>取引数</th>
+              <th class="col-right">リターン</th>
+              <th class="col-right">勝率</th>
+              <th class="col-right">シャープ</th>
+              <th class="col-right">最大DD</th>
+              <th class="col-right">PF</th>
+              <th class="col-right">取引数</th>
               <th></th>
             </tr>
           </thead>

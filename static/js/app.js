@@ -319,24 +319,34 @@ function _updateSessionMeta(session) {
 }
 
 function _updateSessionKPIs(s) {
-  const ret  = s.total_return_pct ?? 0;
-  const pf   = s.profit_factor    ?? 0;
-  const sh   = s.sharpe_ratio     ?? 0;
+  const ret   = s.total_return_pct ?? 0;
+  const pf    = s.profit_factor    ?? 0;
+  const sh    = s.sharpe_ratio     ?? 0;
   const best  = s.best_trade  || {};
   const worst = s.worst_trade || {};
+
   const kpis = [
-    { label: '最終リターン',    val: fmt_pct(ret),                      cls: ret >= 0 ? 'positive' : 'negative' },
-    { label: '勝率',            val: `${(s.win_rate??0).toFixed(1)}%`,  cls: '' },
-    { label: '取引数',          val: `${s.total_trades ?? '—'}件`,      cls: '' },
-    { label: 'プロフィットF',   val: pf.toFixed(2),                     cls: pf >= 1 ? 'positive' : 'negative' },
-    { label: 'シャープ比',      val: sh.toFixed(2),                     cls: sh >= 0 ? '' : 'negative' },
-    { label: '最大DD',          val: `${(s.max_drawdown_pct??0).toFixed(2)}%`, cls: 'negative' },
-    { label: '平均保有日数',    val: `${(s.avg_hold_days??0).toFixed(1)}日`, cls: '' },
-    { label: `最大益 ${best.ticker||''}`,  val: best.pnl_pct  != null ? `+${best.pnl_pct}%`  : '—', cls: 'positive', sub: best.pnl  != null ? `¥${Math.round(best.pnl).toLocaleString()}`  : '' },
-    { label: `最大損 ${worst.ticker||''}`, val: worst.pnl_pct != null ? `${worst.pnl_pct}%` : '—', cls: 'negative', sub: worst.pnl != null ? `¥${Math.round(worst.pnl).toLocaleString()}` : '' },
+    // 主要指標 6枚
+    { label: 'リターン',      val: fmt_pct(ret),                             cls: ret >= 0 ? 'positive' : 'negative' },
+    { label: '勝率',          val: `${(s.win_rate??0).toFixed(1)}%`,         cls: '' },
+    { label: '取引数',        val: `${s.total_trades ?? '—'}件`,             cls: '' },
+    { label: 'PF',            val: pf.toFixed(2),                            cls: pf >= 1 ? 'positive' : 'negative' },
+    { label: 'シャープ比',    val: sh.toFixed(2),                            cls: sh >= 1 ? 'positive' : sh < 0 ? 'negative' : '' },
+    { label: '最大DD',        val: `${(s.max_drawdown_pct??0).toFixed(2)}%`, cls: 'negative' },
+    // 補足指標 3枚（アクセント枠）
+    { label: '平均保有',      val: `${(s.avg_hold_days??0).toFixed(1)}日`,   cls: '', accent: true },
+    { label: `最大益 ${best.ticker||'—'}`,
+      val: best.pnl_pct != null ? `+${best.pnl_pct}%` : '—',
+      cls: 'positive', sub: best.pnl != null ? `¥${Math.round(best.pnl).toLocaleString()}` : '',
+      accent: true },
+    { label: `最大損 ${worst.ticker||'—'}`,
+      val: worst.pnl_pct != null ? `${worst.pnl_pct}%` : '—',
+      cls: 'negative', sub: worst.pnl != null ? `¥${Math.round(worst.pnl).toLocaleString()}` : '',
+      accent: true },
   ];
+
   document.getElementById('db-kpi-row').innerHTML = kpis.map(k =>
-    `<div class="db-kpi-card">
+    `<div class="db-kpi-card${k.accent ? ' db-kpi-accent' : ''}">
        <div class="db-kpi-label">${k.label}</div>
        <div class="db-kpi-val ${k.cls}">${k.val}</div>
        ${k.sub ? `<div class="db-kpi-sub">${k.sub}</div>` : ''}
@@ -445,6 +455,18 @@ function filterDbTrades() {
   renderDbTradesTable(reason ? _dbAllTrades.filter(t => t.exit_reason === reason) : _dbAllTrades);
 }
 
+function _fmtDate(dateStr) {
+  if (!dateStr) return '—';
+  const s = dateStr.slice(0, 10);
+  return s.slice(5).replace('-', '/');  // MM/DD
+}
+
+function _fmtPnl(pnl) {
+  const abs = Math.abs(Math.round(pnl || 0));
+  if (abs >= 10000) return `${(pnl >= 0 ? '+' : '-')}${(abs / 10000).toFixed(1)}万`;
+  return `${pnl >= 0 ? '+' : '-'}¥${abs.toLocaleString()}`;
+}
+
 function renderDbTradesTable(trades) {
   const tbody = document.getElementById('db-trades-tbody');
   document.getElementById('db-trade-count').textContent = `(${trades.length}件)`;
@@ -458,13 +480,13 @@ function renderDbTradesTable(trades) {
     const pnlCls = win ? 'pnl-positive' : 'pnl-negative';
     const rowCls = win ? 'db-trade-row-win' : 'db-trade-row-loss';
     return `<tr class="${rowCls}" onclick="onDbTradeClick(this,${i})">
-      <td><strong>${escHtml(t.ticker)}</strong></td>
-      <td>${(t.entry_date||'—').slice(0,10)}</td>
-      <td>${(t.exit_date||'—').slice(0,10)}</td>
-      <td>${t.hold_days??'—'}日</td>
-      <td class="${pnlCls}">${pct>=0?'+':''}${pct.toFixed(2)}%</td>
-      <td class="${pnlCls}">${pct>=0?'+':''}¥${Math.abs(Math.round(t.pnl||0)).toLocaleString()}</td>
-      <td style="font-size:11px;color:var(--text-muted)">${escHtml(t.exit_reason||'—')}</td>
+      <td class="td-ticker">${escHtml(t.ticker)}</td>
+      <td class="col-center">${_fmtDate(t.entry_date)}</td>
+      <td class="col-center">${_fmtDate(t.exit_date)}</td>
+      <td class="col-right" style="color:var(--text-muted)">${t.hold_days??'—'}日</td>
+      <td class="col-right ${pnlCls}">${pct>=0?'+':''}${pct.toFixed(1)}%</td>
+      <td class="col-right ${pnlCls}">${_fmtPnl(t.pnl)}</td>
+      <td class="td-reason" title="${escHtml(t.exit_reason||'')}">${escHtml(t.exit_reason||'—')}</td>
     </tr>`;
   }).join('');
 }

@@ -330,54 +330,61 @@ input:focus, select:focus { border-color: var(--primary); }
 .mt-12 { margin-top: 12px; }
 
 /* =============================================
-   ダッシュボード（リデザイン）
+   ダッシュボード（全幅スタック型）
    ============================================= */
 .db-selector-bar {
   display: flex; align-items: center; gap: 20px; flex-wrap: wrap;
   background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius); padding: 12px 20px; margin-bottom: 18px;
+  border-radius: var(--radius); padding: 12px 20px; margin-bottom: 16px;
 }
 .db-selector-label { font-size: 12px; font-weight: 600; color: var(--text-muted); white-space: nowrap; }
 .db-selector-meta  { display: flex; gap: 20px; flex-wrap: wrap; font-size: 12px; color: var(--text-muted); }
 
+/* KPI グリッド: 主要6枚 + 補足3枚を1行で */
 .db-kpi-row {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: 12px; margin-bottom: 16px;
+  grid-template-columns: repeat(9, 1fr);
+  gap: 10px; margin-bottom: 16px;
 }
+@media (max-width: 1200px) { .db-kpi-row { grid-template-columns: repeat(5, 1fr); } }
+@media (max-width: 700px)  { .db-kpi-row { grid-template-columns: repeat(3, 1fr); } }
+
 .db-kpi-card {
   background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius); padding: 13px 16px;
+  border-radius: var(--radius); padding: 12px 14px;
   transition: border-color .2s;
 }
 .db-kpi-card:hover { border-color: var(--primary); }
-.db-kpi-label { font-size: 11px; color: var(--text-muted); font-weight: 500; margin-bottom: 4px; }
-.db-kpi-val   { font-size: 20px; font-weight: 700; }
+.db-kpi-card.db-kpi-accent { border-color: rgba(79,142,247,.3); background: rgba(79,142,247,.04); }
+.db-kpi-label { font-size: 11px; color: var(--text-muted); font-weight: 500; margin-bottom: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.db-kpi-val   { font-size: 19px; font-weight: 700; line-height: 1.2; }
 .db-kpi-sub   { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
 .db-kpi-val.positive { color: var(--positive); }
 .db-kpi-val.negative { color: var(--negative); }
 
-.db-main-grid {
-  display: grid;
-  grid-template-columns: 1fr 360px;
-  gap: 16px; align-items: start;
-}
-@media (max-width: 1100px) { .db-main-grid { grid-template-columns: 1fr; } }
+.mb-16 { margin-bottom: 16px; }
 
 .db-chart-legend { display: flex; gap: 14px; font-size: 11px; font-weight: 600; }
 .db-legend-buy  { color: var(--positive); }
 .db-legend-sell { color: var(--negative); }
 
-.db-trades-card  { display: flex; flex-direction: column; }
-.db-trades-scroll { flex: 1; overflow-y: auto; max-height: 530px; }
-.db-trade-count  { font-size: 12px; color: var(--text-muted); margin-left: 4px; }
+/* 取引テーブル */
+.db-trades-table th, .db-trades-table td { white-space: nowrap; }
+.db-trades-table td.td-ticker   { font-weight: 700; min-width: 70px; }
+.db-trades-table td.td-reason   { white-space: normal; max-width: 220px; font-size: 12px; color: var(--text-muted); }
+.col-right  { text-align: right; }
+.col-center { text-align: center; }
+.db-trade-count { font-size: 12px; color: var(--text-muted); margin-left: 4px; }
 
 tbody tr.db-trade-row-win  { background: rgba(62,207,142,0.04); }
 tbody tr.db-trade-row-loss { background: rgba(247,95,95,0.04); }
-tbody tr.db-trade-row-selected { outline: 2px solid var(--primary); outline-offset: -2px; background: rgba(79,142,247,0.08) !important; }
-tbody tr.db-trade-row-win:hover, tbody tr.db-trade-row-loss:hover { filter: brightness(1.15); }
+tbody tr.db-trade-row-selected {
+  outline: 2px solid var(--primary); outline-offset: -2px;
+  background: rgba(79,142,247,0.08) !important;
+}
 #db-trades-tbody tr { cursor: pointer; }
 
+/* セッション比較（折りたたみ） */
 .db-compare-details {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
 }
@@ -391,7 +398,6 @@ tbody tr.db-trade-row-win:hover, tbody tr.db-trade-row-loss:hover { filter: brig
 }
 .db-compare-details[open] > summary::before { transform: rotate(90deg); }
 .db-compare-details[open] > summary { border-bottom: 1px solid var(--border); }
-.db-compare-details .table-wrap { padding: 0 20px 16px; }
 
 .analysis-grid {
   display: grid;

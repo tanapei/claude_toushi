@@ -37,64 +37,94 @@
 
   <!-- ─── ダッシュボード タブ ─── -->
   <section class="tab-panel active" id="panel-dashboard">
-    <div class="section-title">パフォーマンス概要</div>
 
-    <!-- KPI カード -->
-    <div class="kpi-grid" id="kpi-grid">
-      <div class="kpi-card">
-        <div class="kpi-label">セッション数</div>
-        <div class="kpi-value" id="kpi-sessions">—</div>
-      </div>
-      <div class="kpi-card">
-        <div class="kpi-label">平均リターン</div>
-        <div class="kpi-value" id="kpi-avg-return">—</div>
-      </div>
-      <div class="kpi-card">
-        <div class="kpi-label">最高リターン</div>
-        <div class="kpi-value positive" id="kpi-best-return">—</div>
-      </div>
-      <div class="kpi-card">
-        <div class="kpi-label">平均勝率</div>
-        <div class="kpi-value" id="kpi-win-rate">—</div>
-      </div>
-      <div class="kpi-card">
-        <div class="kpi-label">平均シャープ比</div>
-        <div class="kpi-value" id="kpi-sharpe">—</div>
-      </div>
-      <div class="kpi-card">
-        <div class="kpi-label">平均最大DD</div>
-        <div class="kpi-value negative" id="kpi-drawdown">—</div>
-      </div>
-    </div>
-
-    <!-- セッション選択 + 資産推移チャート -->
-    <div class="card mt-20">
-      <div class="card-header">
-        <span>資産推移チャート</span>
-        <select id="session-select" class="select-sm">
+    <!-- Zone 1: セッション選択バー -->
+    <div class="db-selector-bar">
+      <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+        <span class="db-selector-label">セッション</span>
+        <select id="session-select" class="select-sm" onchange="onSessionChange(this.value)">
           <option value="">セッションを選択...</option>
         </select>
       </div>
-      <div class="chart-wrap">
-        <canvas id="equity-chart"></canvas>
+      <div class="db-selector-meta" id="db-selector-meta">
+        <span style="color:var(--text-muted);font-size:12px">バックテストを実行するとここに結果が表示されます</span>
       </div>
     </div>
 
-    <!-- セッション一覧テーブル -->
-    <div class="card mt-20">
-      <div class="card-header">セッション履歴</div>
-      <div class="table-wrap">
-        <table id="sessions-table">
+    <!-- Zone 2: 選択セッションの KPI（動的生成） -->
+    <div class="db-kpi-row" id="db-kpi-row"></div>
+
+    <!-- Zone 3: チャート（左）＋ 取引テーブル（右） -->
+    <div class="db-main-grid" id="db-main-grid" style="display:none">
+
+      <!-- 左: 資産推移 + ドローダウン -->
+      <div class="db-chart-pane">
+        <div class="card">
+          <div class="card-header">
+            <span>資産推移チャート</span>
+            <div class="db-chart-legend">
+              <span class="db-legend-buy">▲ 買いエントリー</span>
+              <span class="db-legend-sell">▼ 売りエグジット</span>
+            </div>
+          </div>
+          <div style="position:relative;height:300px">
+            <canvas id="equity-chart"></canvas>
+          </div>
+        </div>
+        <div class="card mt-12">
+          <div class="card-header">ドローダウン（%）</div>
+          <div style="position:relative;height:110px">
+            <canvas id="drawdown-chart"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- 右: 取引一覧 -->
+      <div class="db-trades-pane">
+        <div class="card db-trades-card">
+          <div class="card-header">
+            <span>取引一覧 <span id="db-trade-count" class="db-trade-count"></span></span>
+            <select id="db-reason-filter" class="select-sm" onchange="filterDbTrades()">
+              <option value="">すべての理由</option>
+            </select>
+          </div>
+          <div class="db-trades-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>銘柄</th>
+                  <th>エントリー</th>
+                  <th>エグジット</th>
+                  <th>日数</th>
+                  <th>損益%</th>
+                  <th>損益円</th>
+                  <th>理由</th>
+                </tr>
+              </thead>
+              <tbody id="db-trades-tbody">
+                <tr><td colspan="7" class="empty">—</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Zone 4: セッション比較（折りたたみ） -->
+    <details class="db-compare-details mt-20" id="db-compare-details">
+      <summary>📊 過去セッション比較</summary>
+      <div class="table-wrap" style="margin-top:12px">
+        <table>
           <thead>
             <tr>
-              <th>実行ID</th>
               <th>期間</th>
               <th>リターン</th>
               <th>勝率</th>
               <th>シャープ</th>
               <th>最大DD</th>
+              <th>PF</th>
               <th>取引数</th>
-              <th>操作</th>
+              <th></th>
             </tr>
           </thead>
           <tbody id="sessions-tbody">
@@ -102,7 +132,8 @@
           </tbody>
         </table>
       </div>
-    </div>
+    </details>
+
   </section>
 
   <!-- ─── シグナル タブ ─── -->

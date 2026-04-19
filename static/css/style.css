@@ -327,6 +327,71 @@ input:focus, select:focus { border-color: var(--primary); }
    AI 分析
    ============================================= */
 .placeholder-msg { color: var(--text-muted); padding: 48px 0; text-align: center; font-size: 15px; }
+.mt-12 { margin-top: 12px; }
+
+/* =============================================
+   ダッシュボード（リデザイン）
+   ============================================= */
+.db-selector-bar {
+  display: flex; align-items: center; gap: 20px; flex-wrap: wrap;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 12px 20px; margin-bottom: 18px;
+}
+.db-selector-label { font-size: 12px; font-weight: 600; color: var(--text-muted); white-space: nowrap; }
+.db-selector-meta  { display: flex; gap: 20px; flex-wrap: wrap; font-size: 12px; color: var(--text-muted); }
+
+.db-kpi-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 12px; margin-bottom: 16px;
+}
+.db-kpi-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 13px 16px;
+  transition: border-color .2s;
+}
+.db-kpi-card:hover { border-color: var(--primary); }
+.db-kpi-label { font-size: 11px; color: var(--text-muted); font-weight: 500; margin-bottom: 4px; }
+.db-kpi-val   { font-size: 20px; font-weight: 700; }
+.db-kpi-sub   { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+.db-kpi-val.positive { color: var(--positive); }
+.db-kpi-val.negative { color: var(--negative); }
+
+.db-main-grid {
+  display: grid;
+  grid-template-columns: 1fr 360px;
+  gap: 16px; align-items: start;
+}
+@media (max-width: 1100px) { .db-main-grid { grid-template-columns: 1fr; } }
+
+.db-chart-legend { display: flex; gap: 14px; font-size: 11px; font-weight: 600; }
+.db-legend-buy  { color: var(--positive); }
+.db-legend-sell { color: var(--negative); }
+
+.db-trades-card  { display: flex; flex-direction: column; }
+.db-trades-scroll { flex: 1; overflow-y: auto; max-height: 530px; }
+.db-trade-count  { font-size: 12px; color: var(--text-muted); margin-left: 4px; }
+
+tbody tr.db-trade-row-win  { background: rgba(62,207,142,0.04); }
+tbody tr.db-trade-row-loss { background: rgba(247,95,95,0.04); }
+tbody tr.db-trade-row-selected { outline: 2px solid var(--primary); outline-offset: -2px; background: rgba(79,142,247,0.08) !important; }
+tbody tr.db-trade-row-win:hover, tbody tr.db-trade-row-loss:hover { filter: brightness(1.15); }
+#db-trades-tbody tr { cursor: pointer; }
+
+.db-compare-details {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+}
+.db-compare-details > summary {
+  list-style: none; cursor: pointer; font-weight: 600; font-size: 14px;
+  padding: 14px 20px; display: flex; align-items: center; gap: 8px;
+}
+.db-compare-details > summary::-webkit-details-marker { display: none; }
+.db-compare-details > summary::before {
+  content: "▶"; font-size: 10px; color: var(--text-muted); transition: transform .2s;
+}
+.db-compare-details[open] > summary::before { transform: rotate(90deg); }
+.db-compare-details[open] > summary { border-bottom: 1px solid var(--border); }
+.db-compare-details .table-wrap { padding: 0 20px 16px; }
 
 .analysis-grid {
   display: grid;

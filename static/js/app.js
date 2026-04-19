@@ -262,133 +262,251 @@ function showResultPreview(s) {
   document.getElementById('result-preview').classList.remove('hidden');
 }
 
-// ─── ダッシュボード ──────────────────────────
+// ─── ダッシュボード（リデザイン版）────────────
+
+let drawdownChart = null;
+let _dbAllTrades  = [];
+
 async function loadDashboard() {
   try {
-    const [sessRes, perfRes] = await Promise.all([
-      fetch('/api/sessions'),
-      fetch('/api/performance'),
-    ]);
-    allSessions = await sessRes.json();
-    const perf  = await perfRes.json();
-
-    updateKPIs(perf);
-    renderSessionsTable(allSessions);
+    allSessions = await (await fetch('/api/sessions')).json();
     populateSessionSelects();
+    renderSessionsTable(allSessions);
 
-    // 最初のセッションの資産推移を自動表示
     const sel = document.getElementById('session-select');
     if (allSessions.length > 0 && !sel.value) {
       sel.value = allSessions[0].run_id;
-      loadEquityChart(allSessions[0].run_id);
+      await loadSessionDetail(allSessions[0].run_id);
     }
   } catch (e) {
     console.warn('ダッシュボード読み込みエラー:', e);
   }
 }
 
-function updateKPIs(perf) {
-  if (!perf || !perf.total_sessions) return;
-  const avgRet = perf.avg_return_pct ?? 0;
-  document.getElementById('kpi-sessions').textContent    = perf.total_sessions;
-  document.getElementById('kpi-avg-return').textContent  = fmt_pct(avgRet);
-  document.getElementById('kpi-avg-return').className    = 'kpi-value ' + (avgRet >= 0 ? 'positive' : 'negative');
-  document.getElementById('kpi-best-return').textContent = fmt_pct(perf.best_return_pct ?? 0);
-  document.getElementById('kpi-win-rate').textContent    = `${(perf.avg_win_rate ?? 0).toFixed(1)}%`;
-  document.getElementById('kpi-sharpe').textContent      = (perf.avg_sharpe ?? 0).toFixed(2);
-  document.getElementById('kpi-drawdown').textContent    = `${(perf.avg_max_drawdown ?? 0).toFixed(2)}%`;
+async function onSessionChange(runId) {
+  if (runId) await loadSessionDetail(runId);
+}
+
+async function loadSessionDetail(runId) {
+  try {
+    const [sessRes, equityRes, tradesRes] = await Promise.all([
+      fetch(`/api/sessions/${runId}`),
+      fetch(`/api/equity/${runId}`),
+      fetch(`/api/trades/${runId}`),
+    ]);
+    const session    = await sessRes.json();
+    const equityData = await equityRes.json();
+    const trades     = await tradesRes.json();
+
+    document.getElementById('db-main-grid').style.display = '';
+    _updateSessionMeta(session);
+    _updateSessionKPIs(session.summary || {});
+    _drawEquityChart(equityData, trades);
+    _drawDrawdownChart(equityData);
+    _dbAllTrades = trades;
+    _populateReasonFilter(trades);
+    renderDbTradesTable(trades);
+  } catch (e) {
+    console.warn('セッション詳細読み込みエラー:', e);
+  }
+}
+
+function _updateSessionMeta(session) {
+  const period = `${(session.start_date||'').slice(0,10)} 〜 ${(session.end_date||'').slice(0,10)}`;
+  const cap    = Number(session.initial_capital || 1000000).toLocaleString();
+  document.getElementById('db-selector-meta').innerHTML =
+    `<span>📅 ${period}</span><span>💰 初期資金 ¥${cap}</span>`;
+}
+
+function _updateSessionKPIs(s) {
+  const ret  = s.total_return_pct ?? 0;
+  const pf   = s.profit_factor    ?? 0;
+  const sh   = s.sharpe_ratio     ?? 0;
+  const best  = s.best_trade  || {};
+  const worst = s.worst_trade || {};
+  const kpis = [
+    { label: '最終リターン',    val: fmt_pct(ret),                      cls: ret >= 0 ? 'positive' : 'negative' },
+    { label: '勝率',            val: `${(s.win_rate??0).toFixed(1)}%`,  cls: '' },
+    { label: '取引数',          val: `${s.total_trades ?? '—'}件`,      cls: '' },
+    { label: 'プロフィットF',   val: pf.toFixed(2),                     cls: pf >= 1 ? 'positive' : 'negative' },
+    { label: 'シャープ比',      val: sh.toFixed(2),                     cls: sh >= 0 ? '' : 'negative' },
+    { label: '最大DD',          val: `${(s.max_drawdown_pct??0).toFixed(2)}%`, cls: 'negative' },
+    { label: '平均保有日数',    val: `${(s.avg_hold_days??0).toFixed(1)}日`, cls: '' },
+    { label: `最大益 ${best.ticker||''}`,  val: best.pnl_pct  != null ? `+${best.pnl_pct}%`  : '—', cls: 'positive', sub: best.pnl  != null ? `¥${Math.round(best.pnl).toLocaleString()}`  : '' },
+    { label: `最大損 ${worst.ticker||''}`, val: worst.pnl_pct != null ? `${worst.pnl_pct}%` : '—', cls: 'negative', sub: worst.pnl != null ? `¥${Math.round(worst.pnl).toLocaleString()}` : '' },
+  ];
+  document.getElementById('db-kpi-row').innerHTML = kpis.map(k =>
+    `<div class="db-kpi-card">
+       <div class="db-kpi-label">${k.label}</div>
+       <div class="db-kpi-val ${k.cls}">${k.val}</div>
+       ${k.sub ? `<div class="db-kpi-sub">${k.sub}</div>` : ''}
+     </div>`
+  ).join('');
+}
+
+function _drawEquityChart(equityData, trades) {
+  if (!equityData.length) return;
+  const dates    = equityData.map(d => d.date);
+  const equities = equityData.map(d => d.total_equity);
+
+  const eqByDate = {};
+  equityData.forEach(d => { eqByDate[d.date] = d.total_equity; });
+  function nearestEq(dateStr) {
+    const key = (dateStr||'').slice(0,10);
+    if (eqByDate[key]) return eqByDate[key];
+    let best = null, bestDiff = Infinity;
+    for (const k of Object.keys(eqByDate)) {
+      const diff = Math.abs(new Date(k) - new Date(key));
+      if (diff < bestDiff) { bestDiff = diff; best = eqByDate[k]; }
+    }
+    return best;
+  }
+
+  const buyPts = [], sellPts = [];
+  trades.forEach(t => {
+    const ey = nearestEq(t.entry_date);
+    if (ey) buyPts.push({ x: (t.entry_date||'').slice(0,10), y: ey, ticker: t.ticker });
+    const xy = nearestEq(t.exit_date);
+    if (xy) sellPts.push({ x: (t.exit_date||'').slice(0,10), y: xy, ticker: t.ticker, pnl_pct: t.pnl_pct });
+  });
+
+  if (equityChart) equityChart.destroy();
+  equityChart = new Chart(
+    document.getElementById('equity-chart').getContext('2d'), {
+    type: 'line',
+    data: { labels: dates, datasets: [
+      { type:'line',    label:'資産評価額', data: equities,
+        borderColor:'#4f8ef7', backgroundColor:'rgba(79,142,247,0.07)',
+        borderWidth:2, pointRadius:0, fill:true, tension:0.3, order:3 },
+      { type:'scatter', label:'買い', data: buyPts,
+        backgroundColor:'rgba(62,207,142,0.9)', borderColor:'rgba(62,207,142,1)',
+        pointStyle:'triangle', pointRadius:7, pointHoverRadius:10, order:1 },
+      { type:'scatter', label:'売り', data: sellPts,
+        backgroundColor:'rgba(247,95,95,0.9)', borderColor:'rgba(247,95,95,1)',
+        pointStyle:'triangle', rotation:180, pointRadius:7, pointHoverRadius:10, order:2 },
+    ]},
+    options: {
+      responsive:true, maintainAspectRatio:false,
+      interaction:{ mode:'index', intersect:false },
+      plugins:{
+        legend:{ labels:{ color:'#7c85a2', usePointStyle:true, boxWidth:10, padding:14 } },
+        tooltip:{ callbacks:{ label: ctx => {
+          if (ctx.datasetIndex === 0) return ` 資産: ¥${ctx.parsed.y.toLocaleString('ja-JP')}`;
+          const r = ctx.raw;
+          if (ctx.datasetIndex === 1) return ` ▲ 買い: ${r.ticker}`;
+          return ` ▼ 売り: ${r.ticker} (${r.pnl_pct>=0?'+':''}${(r.pnl_pct||0).toFixed(1)}%)`;
+        }}},
+      },
+      scales:{
+        x:{ ticks:{ color:'#7c85a2', maxTicksLimit:10 }, grid:{ color:'#2e3350' } },
+        y:{ ticks:{ color:'#7c85a2', callback: v=>`¥${(v/10000).toFixed(0)}万` }, grid:{ color:'#2e3350' } },
+      },
+    },
+  });
+}
+
+function _drawDrawdownChart(equityData) {
+  if (!equityData.length) return;
+  const dates = equityData.map(d => d.date);
+  let peak = -Infinity;
+  const dd = equityData.map(d => {
+    if (d.total_equity > peak) peak = d.total_equity;
+    return peak > 0 ? (d.total_equity - peak) / peak * 100 : 0;
+  });
+  if (drawdownChart) drawdownChart.destroy();
+  drawdownChart = new Chart(
+    document.getElementById('drawdown-chart').getContext('2d'), {
+    type:'line',
+    data:{ labels:dates, datasets:[{
+      data:dd, borderColor:'rgba(247,95,95,0.7)', backgroundColor:'rgba(247,95,95,0.15)',
+      borderWidth:1, pointRadius:0, fill:true, tension:0.3,
+    }]},
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{ display:false },
+        tooltip:{ callbacks:{ label: ctx=>` DD: ${ctx.parsed.y.toFixed(2)}%` } }},
+      scales:{
+        x:{ ticks:{ color:'#7c85a2', maxTicksLimit:10 }, grid:{ color:'#2e3350' } },
+        y:{ suggestedMax:0, ticks:{ color:'#7c85a2', callback: v=>`${v.toFixed(0)}%` }, grid:{ color:'#2e3350' } },
+      },
+    },
+  });
+}
+
+function _populateReasonFilter(trades) {
+  const reasons = [...new Set(trades.map(t => t.exit_reason).filter(Boolean))].sort();
+  const sel = document.getElementById('db-reason-filter');
+  sel.innerHTML = '<option value="">すべての理由</option>' +
+    reasons.map(r => `<option value="${escHtml(r)}">${escHtml(r)}</option>`).join('');
+}
+
+function filterDbTrades() {
+  const reason = document.getElementById('db-reason-filter').value;
+  renderDbTradesTable(reason ? _dbAllTrades.filter(t => t.exit_reason === reason) : _dbAllTrades);
+}
+
+function renderDbTradesTable(trades) {
+  const tbody = document.getElementById('db-trades-tbody');
+  document.getElementById('db-trade-count').textContent = `(${trades.length}件)`;
+  if (!trades.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty">取引なし</td></tr>';
+    return;
+  }
+  tbody.innerHTML = trades.map((t, i) => {
+    const pct    = t.pnl_pct ?? 0;
+    const win    = pct > 0;
+    const pnlCls = win ? 'pnl-positive' : 'pnl-negative';
+    const rowCls = win ? 'db-trade-row-win' : 'db-trade-row-loss';
+    return `<tr class="${rowCls}" onclick="onDbTradeClick(this,${i})">
+      <td><strong>${escHtml(t.ticker)}</strong></td>
+      <td>${(t.entry_date||'—').slice(0,10)}</td>
+      <td>${(t.exit_date||'—').slice(0,10)}</td>
+      <td>${t.hold_days??'—'}日</td>
+      <td class="${pnlCls}">${pct>=0?'+':''}${pct.toFixed(2)}%</td>
+      <td class="${pnlCls}">${pct>=0?'+':''}¥${Math.abs(Math.round(t.pnl||0)).toLocaleString()}</td>
+      <td style="font-size:11px;color:var(--text-muted)">${escHtml(t.exit_reason||'—')}</td>
+    </tr>`;
+  }).join('');
+}
+
+function onDbTradeClick(row, idx) {
+  document.querySelectorAll('#db-trades-tbody tr').forEach(r => r.classList.remove('db-trade-row-selected'));
+  row.classList.add('db-trade-row-selected');
+  const trade = _dbAllTrades[idx];
+  if (!trade || !equityChart) return;
+  const labels = equityChart.data.labels;
+  const pos = labels.indexOf((trade.entry_date||'').slice(0,10));
+  if (pos >= 0) {
+    equityChart.tooltip.setActiveElements([{ datasetIndex:0, index:pos }], { x:0, y:0 });
+    equityChart.update();
+  }
 }
 
 function renderSessionsTable(sessions) {
   const tbody = document.getElementById('sessions-tbody');
   if (!sessions.length) {
-    tbody.innerHTML = '<tr><td colspan="8" class="empty">データなし — バックテストを実行してください</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="empty">データなし</td></tr>';
     return;
   }
   tbody.innerHTML = sessions.map(s => {
-    const ret  = s.total_return_pct ?? 0;
-    const cls  = ret >= 0 ? 'pnl-positive' : 'pnl-negative';
-    const period = `${(s.start_date||'').slice(0,10)} ~ ${(s.end_date||'').slice(0,10)}`;
+    const ret = s.total_return_pct ?? 0;
+    const cls = ret >= 0 ? 'pnl-positive' : 'pnl-negative';
     return `<tr>
-      <td title="${s.run_id}"><code>${s.run_id.slice(0,24)}…</code></td>
-      <td>${period}</td>
+      <td>${(s.start_date||'').slice(0,10)} 〜 ${(s.end_date||'').slice(0,10)}</td>
       <td class="${cls}">${fmt_pct(ret)}</td>
       <td>${(s.win_rate??0).toFixed(1)}%</td>
       <td>${(s.sharpe_ratio??0).toFixed(2)}</td>
       <td class="pnl-negative">${(s.max_drawdown_pct??0).toFixed(2)}%</td>
-      <td>${s.total_trades ?? '—'}</td>
-      <td>
-        <button class="btn-link" onclick="viewSession('${s.run_id}')">詳細</button>
-      </td>
+      <td>${(s.profit_factor??0).toFixed(2)}</td>
+      <td>${s.total_trades??'—'}</td>
+      <td><button class="btn-link" onclick="viewSession('${s.run_id}')">表示</button></td>
     </tr>`;
   }).join('');
 }
 
-// セッション選択 → 資産推移チャート
-document.addEventListener('DOMContentLoaded', () => {
-  document.getElementById('session-select').addEventListener('change', e => {
-    if (e.target.value) loadEquityChart(e.target.value);
-  });
-});
-
-async function loadEquityChart(runId) {
-  try {
-    const data = await (await fetch(`/api/equity/${runId}`)).json();
-    if (!data.length) return;
-
-    const labels   = data.map(d => d.date);
-    const equities = data.map(d => d.total_equity);
-
-    if (equityChart) equityChart.destroy();
-
-    const ctx = document.getElementById('equity-chart').getContext('2d');
-    equityChart = new Chart(ctx, {
-      type: 'line',
-      data: {
-        labels,
-        datasets: [{
-          label: '資産評価額（円）',
-          data: equities,
-          borderColor: '#4f8ef7',
-          backgroundColor: 'rgba(79,142,247,0.08)',
-          borderWidth: 2,
-          pointRadius: 0,
-          fill: true,
-          tension: 0.3,
-        }],
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: { labels: { color: '#7c85a2' } },
-          tooltip: {
-            callbacks: {
-              label: ctx => `¥${ctx.parsed.y.toLocaleString('ja-JP')}`,
-            },
-          },
-        },
-        scales: {
-          x: { ticks: { color: '#7c85a2', maxTicksLimit: 12 }, grid: { color: '#2e3350' } },
-          y: {
-            ticks: {
-              color: '#7c85a2',
-              callback: v => `¥${(v/10000).toFixed(0)}万`,
-            },
-            grid: { color: '#2e3350' },
-          },
-        },
-      },
-    });
-  } catch (e) {
-    console.warn('資産推移グラフの読み込み失敗:', e);
-  }
-}
-
 function viewSession(runId) {
-  // ダッシュボードのセレクトを更新
   document.getElementById('session-select').value = runId;
-  loadEquityChart(runId);
+  loadSessionDetail(runId);
   switchTab('dashboard');
 }
 
@@ -400,10 +518,13 @@ function populateSessionSelects() {
     document.getElementById('analysis-session-select'),
   ];
   selects.forEach(sel => {
-    const cur = sel.value;
-    const opts = allSessions.map(s =>
-      `<option value="${s.run_id}" ${s.run_id === cur ? 'selected' : ''}>${s.run_id.slice(-20)} (${(s.start_date||'').slice(0,10)})</option>`
-    ).join('');
+    if (!sel) return;
+    const cur  = sel.value;
+    const opts = allSessions.map(s => {
+      const period = `${(s.start_date||'').slice(0,10)} 〜 ${(s.end_date||'').slice(0,10)}`;
+      const ret    = s.total_return_pct != null ? ` (${s.total_return_pct >= 0 ? '+' : ''}${s.total_return_pct.toFixed(1)}%)` : '';
+      return `<option value="${s.run_id}" ${s.run_id === cur ? 'selected' : ''}>${period}${ret}</option>`;
+    }).join('');
     sel.innerHTML = `<option value="">セッションを選択...</option>${opts}`;
     if (cur) sel.value = cur;
   });

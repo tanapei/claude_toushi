@@ -104,6 +104,35 @@ def is_market_open() -> bool:
 
 # ─── 朝の発注処理 ─────────────────────────────────────────────
 
+def pre_market_news():
+    """08:30: 直近ニュースを取得し Claude で分析して LINE に通知する。"""
+    if not is_trading_day():
+        return
+
+    logger.info("08:30 朝のニュース分析 開始")
+    try:
+        from trading_system.news_fetcher import fetch_recent_news
+        from trading_system.news_analyzer import analyze_news_impact
+        from trading_system.notifier import notify_news_summary
+
+        news = fetch_recent_news(hours=18)
+        if not news:
+            logger.info("取得ニュースなし。通知をスキップ")
+            return
+
+        logger.info(f"ニュース {len(news)}件 取得。Claude で分析中...")
+        analysis = analyze_news_impact(news)
+
+        if not analysis:
+            logger.warning("分析結果が空のため通知スキップ（APIキー未設定の可能性）")
+            return
+
+        notify_news_summary(analysis, news_count=len(news), mode=_trading_mode())
+        logger.info("朝のニュース分析通知 完了")
+    except Exception as e:
+        logger.exception(f"朝のニュース分析エラー: {e}")
+
+
 def pre_market_notify():
     """08:50: 本日の注目銘柄をLINEに事前通知する。"""
     if not is_trading_day():
@@ -342,6 +371,7 @@ def _setup_schedule():
     weekdays = ["monday", "tuesday", "wednesday", "thursday", "friday"]
 
     for day in weekdays:
+        getattr(schedule.every(), day).at("08:30").do(pre_market_news)
         getattr(schedule.every(), day).at("08:50").do(pre_market_notify)
         getattr(schedule.every(), day).at("09:00").do(morning_routine)
         getattr(schedule.every(), day).at("15:30").do(closing_routine)
@@ -349,7 +379,8 @@ def _setup_schedule():
     schedule.every(5).minutes.do(monitor_routine)
 
     logger.info("スケジュール設定完了")
-    logger.info("  平日 08:50 JST  → 注目銘柄 LINE 通知")
+    logger.info("  平日 08:30 JST  → 朝のニュース分析 LINE 通知")
+    logger.info("  平日 08:50 JST  → 注目銘柄スコア LINE 通知")
     logger.info("  平日 09:00 JST  → 朝の発注処理（祝日チェック済み）")
     logger.info("  平日 5分ごと     → ポジション監視（取引時間中のみ）")
     logger.info("  平日 15:30 JST  → 引け後の改善分析")

@@ -152,6 +152,24 @@ def notify_error(context: str, error: str) -> None:
     )
 
 
+def notify_news_summary(analysis_text: str, news_count: int, mode: str = "paper") -> None:
+    """朝のニュース分析サマリーをLINEに通知する。"""
+    from datetime import datetime
+    import pytz
+    now_str = datetime.now(pytz.timezone("Asia/Tokyo")).strftime("%m/%d %H:%M")
+    mode_str = "📄 ペーパー" if mode != "live" else "💴 ライブ"
+
+    header = (
+        f"📰 朝の市場ニュース分析 [{now_str}]\n"
+        f"参照ニュース: {news_count}件\n"
+        "━━━━━━━━━━━━━━\n"
+    )
+    footer = f"\n━━━━━━━━━━━━━━\nモード: {mode_str}トレード"
+
+    message = header + analysis_text + footer
+    send(message[:4900])  # LINE上限5000文字に余裕を持たせる
+
+
 def notify_morning_signal(
     top_scored: list,
     market_bullish: bool,

@@ -27,9 +27,9 @@ logger = logging.getLogger(__name__)
 
 FACTOR_PARAMS_DEFAULT = {
     "buy_threshold":     70,   # スコア閾値（0-100）
-    "stop_loss_pct":      5,   # 損切り（%）
+    "stop_loss_pct":      4,   # 損切り（%）最適化済み
     "take_profit_pct":   15,   # 利確（%）
-    "trailing_stop_pct":  6,   # トレーリングストップ（%）
+    "trailing_stop_pct":  5,   # トレーリングストップ（%）最適化済み
 }
 
 

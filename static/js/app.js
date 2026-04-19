@@ -305,7 +305,7 @@ async function loadSessionDetail(runId) {
     _drawDrawdownChart(equityData);
     _dbAllTrades = trades;
     _populateReasonFilter(trades);
-    renderDbTradesTable(trades);
+    renderDbTradesTable(trades, equityData);
   } catch (e) {
     console.warn('セッション詳細読み込みエラー:', e);
   }
@@ -452,13 +452,17 @@ function _populateReasonFilter(trades) {
 
 function filterDbTrades() {
   const reason = document.getElementById('db-reason-filter').value;
-  renderDbTradesTable(reason ? _dbAllTrades.filter(t => t.exit_reason === reason) : _dbAllTrades);
+  renderDbTradesTable(
+    reason ? _dbAllTrades.filter(t => t.exit_reason === reason) : _dbAllTrades,
+    _dbEquityData
+  );
 }
+
+let _dbEquityData = [];
 
 function _fmtDate(dateStr) {
   if (!dateStr) return '—';
-  const s = dateStr.slice(0, 10);
-  return s.slice(5).replace('-', '/');  // MM/DD
+  return dateStr.slice(5, 10).replace('-', '/');  // MM/DD
 }
 
 function _fmtPnl(pnl) {
@@ -467,11 +471,27 @@ function _fmtPnl(pnl) {
   return `${pnl >= 0 ? '+' : '-'}¥${abs.toLocaleString()}`;
 }
 
-function renderDbTradesTable(trades) {
+function renderDbTradesTable(trades, equityData) {
+  if (equityData) _dbEquityData = equityData;
+
+  // 日付 → 総資産のルックアップ
+  const eqMap = {};
+  (_dbEquityData || []).forEach(d => { eqMap[d.date] = d.total_equity; });
+  function nearestEq(dateStr) {
+    const key = (dateStr || '').slice(0, 10);
+    if (eqMap[key] != null) return eqMap[key];
+    let best = null, bestDiff = Infinity;
+    for (const k of Object.keys(eqMap)) {
+      const diff = Math.abs(new Date(k) - new Date(key));
+      if (diff < bestDiff) { bestDiff = diff; best = eqMap[k]; }
+    }
+    return best;
+  }
+
   const tbody = document.getElementById('db-trades-tbody');
   document.getElementById('db-trade-count').textContent = `(${trades.length}件)`;
   if (!trades.length) {
-    tbody.innerHTML = '<tr><td colspan="7" class="empty">取引なし</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="empty">取引なし</td></tr>';
     return;
   }
   tbody.innerHTML = trades.map((t, i) => {
@@ -479,6 +499,8 @@ function renderDbTradesTable(trades) {
     const win    = pct > 0;
     const pnlCls = win ? 'pnl-positive' : 'pnl-negative';
     const rowCls = win ? 'db-trade-row-win' : 'db-trade-row-loss';
+    const eq     = nearestEq(t.exit_date);
+    const eqStr  = eq != null ? `¥${(eq / 10000).toFixed(0)}万` : '—';
     return `<tr class="${rowCls}" onclick="onDbTradeClick(this,${i})">
       <td class="td-ticker">${escHtml(t.ticker)}</td>
       <td class="col-center">${_fmtDate(t.entry_date)}</td>
@@ -486,6 +508,7 @@ function renderDbTradesTable(trades) {
       <td class="col-right" style="color:var(--text-muted)">${t.hold_days??'—'}日</td>
       <td class="col-right ${pnlCls}">${pct>=0?'+':''}${pct.toFixed(1)}%</td>
       <td class="col-right ${pnlCls}">${_fmtPnl(t.pnl)}</td>
+      <td class="col-right" style="color:var(--text-muted);font-size:12px">${eqStr}</td>
       <td class="td-reason" title="${escHtml(t.exit_reason||'')}">${escHtml(t.exit_reason||'—')}</td>
     </tr>`;
   }).join('');

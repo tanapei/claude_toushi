@@ -233,19 +233,27 @@ class ProgressBacktester:
         results = []
         params = self.strategy_params.copy()
 
-        # ─── データは1回だけダウンロード ───
-        run_state.update(5, "株価データを取得中（全イテレーション共通）...")
-        raw_data = load_universe_data(self.start_date, self.end_date)
+        # ─── データは1回だけダウンロード（ウォームアップ300日含む）───
+        import pandas as _pd
+        from datetime import datetime as _dt, timedelta as _td
+        warmup_days = 300
+        fetch_start = (
+            _dt.strptime(self.start_date, "%Y-%m-%d") - _td(days=warmup_days)
+        ).strftime("%Y-%m-%d")
+
+        run_state.update(5, f"株価データを取得中（ウォームアップ含む: {fetch_start} 〜）...")
+        raw_data = load_universe_data(fetch_start, self.end_date)
         if not raw_data:
             raise RuntimeError("株価データの取得に失敗しました")
 
         run_state.update(12, "日経225データを取得中...")
-        nikkei_raw = get_benchmark_data(self.start_date, self.end_date)
+        nikkei_raw = get_benchmark_data(fetch_start, self.end_date)
 
+        sim_start_ts = _pd.Timestamp(self.start_date)
         all_dates_set: set = set()
         for df in raw_data.values():
             all_dates_set.update(df.index.tolist())
-        all_dates = sorted(all_dates_set)
+        all_dates = sorted(d for d in all_dates_set if d >= sim_start_ts)
 
         run_state.update(15, f"データ取得完了 ({len(raw_data)}銘柄 / {len(all_dates)}営業日)")
 

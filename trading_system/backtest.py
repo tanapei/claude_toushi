@@ -136,16 +136,25 @@ class Backtester:
     # 内部処理
     # ------------------------------------------------------------------
 
-    def _load_data(self) -> None:
-        """全銘柄のデータを取得する。"""
-        logger.info("株価データを取得中...")
-        self.data = load_universe_data(self.start_date, self.end_date, self.tickers)
+    def _load_data(self, warmup_days: int = 300) -> None:
+        """全銘柄のデータを取得する。
+        ファクタースコア（6ヶ月モメンタム等）を初日から正確に計算するため、
+        シミュレーション開始日より warmup_days 日前からデータを取得する。
+        シミュレーションループ自体は self.start_date 以降のみを対象にする。
+        """
+        from datetime import datetime as _dt, timedelta as _td
+        fetch_start = (
+            _dt.strptime(self.start_date, "%Y-%m-%d") - _td(days=warmup_days)
+        ).strftime("%Y-%m-%d")
+
+        logger.info(f"株価データを取得中（ウォームアップ含む: {fetch_start} 〜 {self.end_date}）...")
+        self.data = load_universe_data(fetch_start, self.end_date, self.tickers)
         if not self.data:
             return
 
         # 日経225データを取得（市場レジームフィルタ用）
         logger.info("日経225データを取得中...")
-        nikkei_raw = get_benchmark_data(self.start_date, self.end_date)
+        nikkei_raw = get_benchmark_data(fetch_start, self.end_date)
         if not nikkei_raw.empty:
             regime_period = self.strategy_params.get("market_regime_ema", 50)
             nikkei_raw["regime_ema"] = nikkei_raw["close"].ewm(
@@ -154,12 +163,13 @@ class Backtester:
             self.nikkei_data = nikkei_raw
             logger.info(f"日経225: {len(self.nikkei_data)}日分取得完了")
 
-        # 共通日付リストを作成
+        # 共通日付リストをシミュレーション開始日以降に限定
+        sim_start_ts = pd.Timestamp(self.start_date)
         all_dates_set = set()
         for df in self.data.values():
             all_dates_set.update(df.index.tolist())
-        self.all_dates = sorted(all_dates_set)
-        logger.info(f"取引日数: {len(self.all_dates)}日")
+        self.all_dates = sorted(d for d in all_dates_set if d >= sim_start_ts)
+        logger.info(f"取引日数: {len(self.all_dates)}日（ウォームアップ除く）")
 
     def _precompute_factor_scores(self) -> Dict:
         """
@@ -172,8 +182,6 @@ class Backtester:
         n = len(self.all_dates)
 
         for i, date in enumerate(self.all_dates):
-            if i < 60:
-                continue
             if i % 100 == 0:
                 logger.info(f"  スコア計算: {date.date()} ({i}/{n}日)")
 

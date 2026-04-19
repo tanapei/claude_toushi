@@ -129,19 +129,27 @@ def score_stock(
         else:
             reasons.append("出来高は平均以下")
 
-    # ⑤ RSI（15点）: scoring_config で設定された適正範囲
+    # ⑤ RSI（15点）: 上限を70に厳格化（過熱銘柄の追いかけ買いを防止）
     cfg = _load_scoring_cfg()
     rsi_lower = cfg.get("rsi_lower", 30)
-    rsi_upper = cfg.get("rsi_upper", 75)
+    rsi_upper = min(cfg.get("rsi_upper", 70), 70)  # 上限は最大70
     rsi_val = float(_rsi(close, 14).iloc[-1])
     details["rsi"] = round(rsi_val, 1)
     if rsi_lower <= rsi_val <= rsi_upper:
         score += 15
         reasons.append(f"RSI適正（{rsi_val:.0f}）")
     elif rsi_val > rsi_upper:
-        reasons.append(f"RSI過熱（{rsi_val:.0f}）")
+        reasons.append(f"RSI過熱（{rsi_val:.0f}）— 買い見送り推奨")
     else:
         reasons.append(f"RSI低水準（{rsi_val:.0f}）")
+
+    # ⑥ 直近急騰ペナルティ（-15点）: 5日で+8%超は追いかけ買いリスク大
+    if len(close) >= 6:
+        ret_5d = (float(close.iloc[-1]) - float(close.iloc[-6])) / float(close.iloc[-6]) * 100
+        details["ret_5d_pct"] = round(ret_5d, 1)
+        if ret_5d >= 8.0:
+            score = max(0, score - 15)
+            reasons.append(f"直近5日急騰ペナルティ（+{ret_5d:.1f}%）— 高値追い防止")
 
     return score, reasons, details
 

@@ -596,106 +596,47 @@
       <button class="btn-secondary" onclick="openSettings()" style="font-size:12px;padding:5px 16px;white-space:nowrap">⚙ モード変更</button>
     </div>
 
-    <!-- ペーパートレードパネル -->
-    <div id="paper-panel" class="card mb-20">
-      <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;">
-        <span>📄 ペーパートレード（仮想資金）</span>
-        <div style="display:flex;gap:8px">
-          <button class="btn-primary" onclick="runPaperCycle()" style="font-size:12px;padding:5px 14px">▶ 1サイクル実行</button>
-          <button class="btn-secondary" onclick="resetPaperTrader()" style="font-size:12px;padding:5px 14px">🔄 リセット</button>
-        </div>
-      </div>
-      <!-- KPI行 -->
-      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;padding:16px">
-        <div class="kpi-card"><div class="kpi-label">総資産</div><div class="kpi-value" id="pt-equity">—</div></div>
-        <div class="kpi-card"><div class="kpi-label">リターン</div><div class="kpi-value" id="pt-return">—</div></div>
-        <div class="kpi-card"><div class="kpi-label">現金</div><div class="kpi-value" id="pt-cash">—</div></div>
-        <div class="kpi-card"><div class="kpi-label">勝率</div><div class="kpi-value" id="pt-winrate">—</div></div>
-        <div class="kpi-card"><div class="kpi-label">完了取引</div><div class="kpi-value" id="pt-trades">—</div></div>
-      </div>
-      <!-- 保有ポジション -->
-      <div style="padding:0 16px 8px">
-        <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">■ 保有中ポジション</div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>銘柄</th><th>取得日</th><th>取得価格</th><th>現在価格</th><th>損益</th><th>損益%</th></tr></thead>
-            <tbody id="pt-positions"></tbody>
-          </table>
-        </div>
-      </div>
-      <!-- 直近取引履歴 -->
-      <div style="padding:0 16px 16px">
-        <div style="font-size:12px;color:var(--text-muted);margin:12px 0 8px">■ 直近の取引</div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>銘柄</th><th>売却日</th><th>損益</th><th>損益%</th><th>理由</th></tr></thead>
-            <tbody id="pt-history"></tbody>
-          </table>
-        </div>
-      </div>
-      <div id="pt-msg" style="padding:8px 16px 12px;font-size:12px;color:var(--text-muted)"></div>
-    </div>
-
-    <!-- 稼働状態バナー + 一時停止ボタン -->
-    <div id="at-status-banner" style="display:flex;align-items:center;justify-content:space-between;padding:12px 18px;border-radius:10px;margin-bottom:20px;background:var(--surface2);border:1px solid var(--border)">
+    <!-- 稼働状態バナー + 操作ボタン（モードにより変化） -->
+    <div id="at-status-banner" style="display:flex;align-items:center;justify-content:space-between;padding:12px 18px;border-radius:10px;margin-bottom:8px;background:var(--surface2);border:1px solid var(--border)">
       <div>
         <span id="at-status-dot" style="display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:8px;background:var(--positive)"></span>
         <span id="at-status-label" style="font-weight:600;font-size:14px">稼働中</span>
         <span style="font-size:12px;color:var(--text-muted);margin-left:10px">（local_trader.py が稼働している場合のみ有効）</span>
       </div>
-      <div style="display:flex;gap:10px">
+      <div style="display:flex;gap:8px;align-items:center">
+        <!-- ペーパーモード専用ボタン -->
+        <div id="at-paper-controls" style="display:none;gap:8px">
+          <button class="btn-primary" onclick="runPaperCycle()" style="font-size:12px;padding:5px 14px">▶ 1サイクル実行</button>
+          <button class="btn-secondary" onclick="resetPaperTrader()" style="font-size:12px;padding:5px 14px">🔄 リセット</button>
+        </div>
         <button id="at-pause-btn" class="btn-secondary" onclick="pauseTrader()" style="font-size:13px;padding:6px 16px">⏸ 一時停止</button>
-        <button id="at-resume-btn" class="btn-primary"   onclick="resumeTrader()" style="font-size:13px;padding:6px 16px;display:none">▶ 再開</button>
+        <button id="at-resume-btn" class="btn-primary" onclick="resumeTrader()" style="font-size:13px;padding:6px 16px;display:none">▶ 再開</button>
       </div>
     </div>
+    <div id="pt-msg" style="min-height:18px;padding:2px 4px 10px;font-size:12px;color:var(--text-muted)"></div>
 
-    <!-- パフォーマンス KPI -->
+    <!-- KPI グリッド（モードに応じて内容変化） -->
     <div class="kpi-grid" id="at-kpi-grid">
-      <div class="kpi-card">
-        <div class="kpi-label">総取引数</div>
-        <div class="kpi-value" id="at-kpi-total">—</div>
-      </div>
-      <div class="kpi-card">
-        <div class="kpi-label">勝率</div>
-        <div class="kpi-value" id="at-kpi-winrate">—</div>
-      </div>
-      <div class="kpi-card">
-        <div class="kpi-label">合計損益</div>
-        <div class="kpi-value" id="at-kpi-pnl">—</div>
-      </div>
-      <div class="kpi-card">
-        <div class="kpi-label">平均損益率</div>
-        <div class="kpi-value" id="at-kpi-avg-pnl">—</div>
-      </div>
-      <div class="kpi-card">
-        <div class="kpi-label">プロフィットファクター</div>
-        <div class="kpi-value" id="at-kpi-pf">—</div>
-      </div>
-      <div class="kpi-card">
-        <div class="kpi-label">平均保有日数</div>
-        <div class="kpi-value" id="at-kpi-hold">—</div>
-      </div>
+      <div class="kpi-card"><div class="kpi-label" id="at-kl-1">—</div><div class="kpi-value" id="at-kv-1">—</div></div>
+      <div class="kpi-card"><div class="kpi-label" id="at-kl-2">—</div><div class="kpi-value" id="at-kv-2">—</div></div>
+      <div class="kpi-card"><div class="kpi-label" id="at-kl-3">—</div><div class="kpi-value" id="at-kv-3">—</div></div>
+      <div class="kpi-card"><div class="kpi-label" id="at-kl-4">—</div><div class="kpi-value" id="at-kv-4">—</div></div>
+      <div class="kpi-card"><div class="kpi-label" id="at-kl-5">—</div><div class="kpi-value" id="at-kv-5">—</div></div>
+      <div class="kpi-card"><div class="kpi-label" id="at-kl-6">—</div><div class="kpi-value" id="at-kv-6">—</div></div>
     </div>
 
-    <!-- 現在の保有ポジション（実取引） -->
+    <!-- 保有ポジション（モード共通・内容はJSで切替） -->
     <div class="card mt-20">
       <div class="card-header">
-        💼 現在の保有ポジション（実取引）
+        <span id="at-positions-title">💼 保有ポジション</span>
         <button class="btn-secondary" onclick="loadAutoTraderData()" style="font-size:12px;padding:4px 12px">更新</button>
       </div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr>
-            <th>銘柄</th><th>市場</th><th>取得日</th><th>取得価格</th><th>株数</th><th>投資額</th>
-          </tr></thead>
-          <tbody id="at-positions-table">
-            <tr><td colspan="6" class="empty">保有なし（自動取引稼働後に表示されます）</td></tr>
-          </tbody>
-        </table>
+      <div id="at-positions-wrap" class="table-wrap">
+        <table><tbody><tr><td class="empty">読み込み中...</td></tr></tbody></table>
       </div>
     </div>
 
-    <!-- 累積損益チャート -->
+    <!-- 累積損益チャート（ライブモード用） -->
     <div class="card mt-20" id="at-equity-card" style="display:none">
       <div class="card-header">📈 累積損益推移</div>
       <div class="chart-wrap">
@@ -703,33 +644,22 @@
       </div>
     </div>
 
-    <!-- 実取引履歴テーブル -->
+    <!-- 取引履歴（モード共通・内容はJSで切替） -->
     <div class="card mt-20">
-      <div class="card-header">📋 実取引履歴</div>
-
-      <!-- ミニ統計 -->
+      <div class="card-header" id="at-history-title">📋 取引履歴</div>
       <div class="trade-stats" id="at-trade-stats" style="display:none">
         <div class="ts-item positive"><span class="ts-label">勝ち</span><span class="ts-val" id="at-wins">—</span></div>
         <div class="ts-item negative"><span class="ts-label">負け</span><span class="ts-val" id="at-losses">—</span></div>
         <div class="ts-item"><span class="ts-label">最良取引</span><span class="ts-val positive" id="at-best">—</span></div>
         <div class="ts-item"><span class="ts-label">最悪取引</span><span class="ts-val negative" id="at-worst">—</span></div>
       </div>
-
-      <div class="table-wrap">
-        <table>
-          <thead><tr>
-            <th>銘柄</th><th>取得日</th><th>売却日</th><th>取得価格</th><th>売却価格</th>
-            <th>株数</th><th>損益(円)</th><th>損益率</th><th>売却理由</th><th>日記</th>
-          </tr></thead>
-          <tbody id="at-trades-table">
-            <tr><td colspan="10" class="empty">実取引なし（自動取引稼働後に表示されます）</td></tr>
-          </tbody>
-        </table>
+      <div id="at-trades-wrap" class="table-wrap">
+        <table><tbody><tr><td class="empty">読み込み中...</td></tr></tbody></table>
       </div>
     </div>
 
-    <!-- トレード日記 -->
-    <div class="card mt-20" id="at-diary-card">
+    <!-- トレード日記（ライブモードのみ表示） -->
+    <div class="card mt-20" id="at-diary-card" style="display:none">
       <div class="card-header">📔 トレード日記（Claude 分析）</div>
       <p style="font-size:12px;color:var(--text-muted);margin:0 0 12px">
         売却のたびに Claude がトレードを分析し、勝敗の原因と教訓を記録します。
@@ -744,10 +674,17 @@
     <div class="card mt-20">
       <div class="card-header">⚙️ 自動取引 セットアップガイド</div>
       <div style="font-size:13px;line-height:2.4;color:var(--text-muted)">
-        <p><strong style="color:var(--text)">①</strong> kabuステーション® を起動・ログイン済みにする</p>
-        <p><strong style="color:var(--text)">②</strong> <code>.env</code> に <code>KABU_API_PASSWORD</code> と <code>KABU_TRADE_PASSWORD</code> を設定</p>
-        <p><strong style="color:var(--text)">③</strong> PC上で <code>python local_trader.py</code> を実行</p>
-        <p><strong style="color:var(--text)">④</strong> 平日 09:00 JST に自動で銘柄選定・発注が始まります</p>
+        <div id="at-guide-paper">
+          <p><strong style="color:var(--text)">ペーパーモード（現在）</strong> — kabuステーション® 不要</p>
+          <p><strong style="color:var(--text)">①</strong> PC上で <code>python local_trader.py</code> を実行するだけで仮想売買が自動開始</p>
+          <p style="font-size:12px">平日 09:00 シグナル生成・仮想発注 / 5分ごと 損切り監視 / 15:30 引け後分析</p>
+        </div>
+        <div id="at-guide-live" style="display:none">
+          <p><strong style="color:var(--text)">①</strong> kabuステーション® を起動・ログイン済みにする</p>
+          <p><strong style="color:var(--text)">②</strong> <code>.env</code> に <code>KABU_API_PASSWORD</code> と <code>KABU_TRADE_PASSWORD</code> を設定</p>
+          <p><strong style="color:var(--text)">③</strong> PC上で <code>python local_trader.py</code> を実行</p>
+          <p><strong style="color:var(--text)">④</strong> 平日 09:00 JST に自動で銘柄選定・発注が始まります</p>
+        </div>
         <p style="margin-top:8px;font-size:12px">
           ※ 損切り: -5% / 利確: +15% / トレーリングストップ: 高値から-6%<br>
           ※ 引け後 15:30 に Claude が実績を分析してスコアリングを自動改善します

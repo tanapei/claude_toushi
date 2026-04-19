@@ -1240,16 +1240,126 @@ async function removeVirtualPosition(ticker) {
 //  自動トレード タブ
 // =============================================
 
+let _currentTradingMode = 'paper';
+
 async function loadAutoTraderData() {
+  try {
+    const modeRes = await fetch('/api/trading-mode');
+    const modeData = await modeRes.json();
+    _currentTradingMode = modeData.trading_mode || 'paper';
+    _applyTradingMode(_currentTradingMode);
+  } catch (e) {
+    console.warn('モード取得失敗:', e);
+  }
+
   await Promise.all([
-    loadRealTradesSummary(),
-    loadRealPositions(),
-    loadRealTrades(),
-    loadTradeDiary(),
+    loadTraderStatus(),
+    _currentTradingMode === 'live' ? _loadLiveAutoData() : _loadPaperAutoData(),
   ]);
 }
 
-async function loadRealTradesSummary() {
+// ─── ペーパーモード データ読み込み ──────────────
+
+async function _loadPaperAutoData() {
+  try {
+    const res = await fetch('/api/paper-trader/status');
+    const d   = await res.json();
+    if (d.error) return;
+    _renderPaperKPIs(d);
+    _renderPaperPositions(d);
+    _renderPaperHistory(d);
+  } catch (e) {
+    console.warn('ペーパーデータ取得失敗:', e);
+  }
+}
+
+function _setKV(i, label, val, cls) {
+  document.getElementById(`at-kl-${i}`).textContent = label;
+  const el = document.getElementById(`at-kv-${i}`);
+  el.innerHTML = val;
+  el.className = 'kpi-value' + (cls ? ' ' + cls : '');
+}
+
+function _renderPaperKPIs(d) {
+  const ret = d.total_return_pct || 0;
+  const pnl = d.total_pnl || 0;
+  _setKV(1, '総資産',   `¥${(d.total_equity||0).toLocaleString('ja-JP')}`);
+  _setKV(2, 'リターン', `${ret>=0?'+':''}${ret.toFixed(2)}%`, ret>=0?'positive':'negative');
+  _setKV(3, '現金',     `¥${(d.cash||0).toLocaleString('ja-JP')}`);
+  _setKV(4, '勝率',     `${d.win_rate||0}%`);
+  _setKV(5, '完了取引', `${d.trade_count||0}件`);
+  _setKV(6, '合計損益', `${pnl>=0?'+':''}¥${Math.abs(pnl).toLocaleString('ja-JP')}`, pnl>=0?'positive':'negative');
+}
+
+function _renderPaperPositions(d) {
+  document.getElementById('at-positions-title').textContent = '💼 保有ポジション';
+  const wrap = document.getElementById('at-positions-wrap');
+  const positions = d.positions || [];
+  if (!positions.length) {
+    wrap.innerHTML = '<table><tbody><tr><td colspan="6" class="empty">保有なし（シグナル発生後に自動で購入されます）</td></tr></tbody></table>';
+    return;
+  }
+  wrap.innerHTML = `<table>
+    <thead><tr>
+      <th>銘柄</th><th>取得日</th><th>取得価格</th><th>現在価格</th><th>損益</th><th>損益%</th>
+    </tr></thead>
+    <tbody>${positions.map(p => {
+      const cls = p.pnl >= 0 ? 'pnl-positive' : 'pnl-negative';
+      return `<tr>
+        <td><strong>${escHtml(p.ticker)}</strong><br><small style="color:var(--text-muted)">${escHtml(p.label||'')}</small></td>
+        <td>${(p.entry_date||'').slice(0,10)}</td>
+        <td>¥${(p.entry_price||0).toLocaleString('ja-JP')}</td>
+        <td>${p.current_price ? '¥'+p.current_price.toLocaleString('ja-JP') : '—'}</td>
+        <td class="${cls}">${p.pnl>=0?'+':''}¥${Math.abs(p.pnl||0).toLocaleString('ja-JP')}</td>
+        <td class="${cls}">${p.pnl_pct>=0?'+':''}${(p.pnl_pct||0).toFixed(2)}%</td>
+      </tr>`;
+    }).join('')}</tbody>
+  </table>`;
+}
+
+function _renderPaperHistory(d) {
+  document.getElementById('at-history-title').textContent = '📋 取引履歴';
+  const wrap   = document.getElementById('at-trades-wrap');
+  const trades = d.recent_trades || [];
+  document.getElementById('at-trade-stats').style.display = 'none';
+
+  if (!trades.length) {
+    wrap.innerHTML = '<table><tbody><tr><td colspan="7" class="empty">取引なし（損切り・利確・シグナル売りで記録されます）</td></tr></tbody></table>';
+    return;
+  }
+  wrap.innerHTML = `<table>
+    <thead><tr>
+      <th>銘柄</th><th>取得日</th><th>売却日</th><th>取得価格</th><th>売却価格</th><th>損益</th><th>損益%</th><th>売却理由</th>
+    </tr></thead>
+    <tbody>${trades.map(t => {
+      const cls = t.pnl >= 0 ? 'pnl-positive' : 'pnl-negative';
+      return `<tr>
+        <td><strong>${escHtml(t.ticker)}</strong><br><small style="color:var(--text-muted)">${escHtml(t.label||'')}</small></td>
+        <td>${(t.entry_date||'').slice(0,10)}</td>
+        <td>${(t.exit_date||'').slice(0,10)}</td>
+        <td>¥${(t.entry_price||0).toLocaleString('ja-JP')}</td>
+        <td>¥${(t.exit_price||0).toLocaleString('ja-JP')}</td>
+        <td class="${cls}">${t.pnl>=0?'+':''}¥${Math.abs(t.pnl||0).toLocaleString('ja-JP')}</td>
+        <td class="${cls}">${t.pnl_pct>=0?'+':''}${(t.pnl_pct||0).toFixed(2)}%</td>
+        <td style="font-size:11px;color:var(--text-muted)">${escHtml(t.reason||'')}</td>
+      </tr>`;
+    }).join('')}</tbody>
+  </table>`;
+}
+
+// ─── ライブモード データ読み込み ─────────────────
+
+async function _loadLiveAutoData() {
+  await Promise.all([
+    _loadLiveKPIs(),
+    _loadLivePositions(),
+    _loadLiveTrades(),
+    loadTradeDiary(),
+    loadAtEquityChart(),
+  ]);
+}
+
+async function _loadLiveKPIs() {
   try {
     const res  = await fetch('/api/real-trades/summary');
     const data = await res.json();
@@ -1257,17 +1367,13 @@ async function loadRealTradesSummary() {
 
     const pnl    = data.total_pnl || 0;
     const pnlPct = data.avg_pnl_pct || 0;
-    const pnlCls = pnl >= 0 ? 'positive' : 'negative';
-    const sign   = pnl >= 0 ? '+' : '';
-
-    document.getElementById('at-kpi-total').textContent    = `${data.total_trades}件`;
-    document.getElementById('at-kpi-winrate').textContent  = `${data.win_rate}%`;
-    document.getElementById('at-kpi-pnl').innerHTML        =
-      `<span class="${pnlCls}">${sign}¥${Math.abs(pnl).toLocaleString()}</span>`;
-    document.getElementById('at-kpi-avg-pnl').innerHTML    =
-      `<span class="${pnlPct >= 0 ? 'positive' : 'negative'}">${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%</span>`;
-    document.getElementById('at-kpi-pf').textContent       = data.profit_factor.toFixed(2);
-    document.getElementById('at-kpi-hold').textContent     = `${data.avg_hold_days}日`;
+    const pf     = data.profit_factor || 0;
+    _setKV(1, '総取引数',   `${data.total_trades}件`);
+    _setKV(2, '勝率',       `${data.win_rate}%`);
+    _setKV(3, '合計損益',   `${pnl>=0?'+':''}¥${Math.abs(pnl).toLocaleString('ja-JP')}`, pnl>=0?'positive':'negative');
+    _setKV(4, '平均損益率', `${pnlPct>=0?'+':''}${pnlPct.toFixed(2)}%`, pnlPct>=0?'positive':'negative');
+    _setKV(5, 'PF',         pf.toFixed(2), pf>=1?'positive':'negative');
+    _setKV(6, '平均保有',   `${data.avg_hold_days}日`);
 
     if (data.total_trades > 0) {
       const stats = document.getElementById('at-trade-stats');
@@ -1282,68 +1388,73 @@ async function loadRealTradesSummary() {
   }
 }
 
-async function loadRealPositions() {
+async function _loadLivePositions() {
   try {
     const res  = await fetch('/api/portfolio');
     const data = await res.json();
-    const tbody = document.getElementById('at-positions-table');
+    document.getElementById('at-positions-title').textContent = '💼 保有ポジション（実取引）';
+    const wrap = document.getElementById('at-positions-wrap');
 
     if (!data.positions || data.positions.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="6" class="empty">保有なし（自動取引稼働後に表示されます）</td></tr>';
+      wrap.innerHTML = '<table><tbody><tr><td colspan="6" class="empty">保有なし（自動取引稼働後に表示されます）</td></tr></tbody></table>';
       return;
     }
-
-    tbody.innerHTML = data.positions.map(p => {
-      const cur = p.market === 'JP' ? '¥' : '$';
-      return `<tr>
-        <td><strong>${escHtml(p.ticker)}</strong><br>
-            <small style="color:var(--text-muted)">${escHtml(p.label||'')}</small></td>
-        <td>${p.market === 'JP' ? '🇯🇵' : '🇺🇸'}</td>
-        <td>${p.entry_date || '—'}</td>
-        <td>${cur}${(p.entry_price||0).toLocaleString('ja-JP', {maximumFractionDigits:2})}</td>
-        <td>${p.shares||0}株</td>
-        <td>¥${(p.invested_amount||0).toLocaleString()}</td>
-      </tr>`;
-    }).join('');
+    wrap.innerHTML = `<table>
+      <thead><tr><th>銘柄</th><th>市場</th><th>取得日</th><th>取得価格</th><th>株数</th><th>投資額</th></tr></thead>
+      <tbody>${data.positions.map(p => {
+        const cur = p.market === 'JP' ? '¥' : '$';
+        return `<tr>
+          <td><strong>${escHtml(p.ticker)}</strong><br><small style="color:var(--text-muted)">${escHtml(p.label||'')}</small></td>
+          <td>${p.market === 'JP' ? '🇯🇵' : '🇺🇸'}</td>
+          <td>${p.entry_date||'—'}</td>
+          <td>${cur}${(p.entry_price||0).toLocaleString('ja-JP',{maximumFractionDigits:2})}</td>
+          <td>${p.shares||0}株</td>
+          <td>¥${(p.invested_amount||0).toLocaleString()}</td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table>`;
   } catch (e) {
     console.warn('実ポジション取得失敗:', e);
   }
 }
 
-async function loadRealTrades() {
+async function _loadLiveTrades() {
   try {
     const res    = await fetch('/api/real-trades');
     const trades = await res.json();
-    const tbody  = document.getElementById('at-trades-table');
+    document.getElementById('at-history-title').textContent = '📋 実取引履歴';
+    const wrap = document.getElementById('at-trades-wrap');
 
     if (!Array.isArray(trades) || trades.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="10" class="empty">実取引なし（自動取引稼働後に表示されます）</td></tr>';
+      wrap.innerHTML = '<table><tbody><tr><td colspan="10" class="empty">実取引なし（自動取引稼働後に表示されます）</td></tr></tbody></table>';
       return;
     }
-
-    tbody.innerHTML = trades.map(t => {
-      const pnlPct = t.pnl_pct || 0;
-      const pnl    = t.pnl || 0;
-      const cls    = pnlPct >= 0 ? 'pnl-positive' : 'pnl-negative';
-      const sign   = pnlPct >= 0 ? '+' : '';
-      const diaryId = `${t.ticker}_${(t.exit_date||'').replace(/-/g,'')||''}`;
-      return `<tr>
-        <td><strong>${escHtml(t.ticker)}</strong><br>
-            <small style="color:var(--text-muted)">${escHtml(t.label||'')}</small></td>
-        <td>${t.entry_date||'—'}</td>
-        <td>${t.exit_date||t.logged_at?.slice(0,10)||'—'}</td>
-        <td>¥${(t.entry_price||0).toLocaleString()}</td>
-        <td>¥${(t.exit_price||0).toLocaleString()}</td>
-        <td>${t.shares||0}株</td>
-        <td class="${cls}">${sign}¥${Math.abs(pnl).toLocaleString()}</td>
-        <td class="${cls}">${sign}${pnlPct.toFixed(2)}%</td>
-        <td style="font-size:11px;color:var(--text-muted)">${escHtml(t.exit_reason||'')}</td>
-        <td>
-          <button class="btn-link" style="font-size:11px"
-            onclick="scrollToDiaryEntry('${escHtml(diaryId)}')">日記▼</button>
-        </td>
-      </tr>`;
-    }).join('');
+    wrap.innerHTML = `<table>
+      <thead><tr>
+        <th>銘柄</th><th>取得日</th><th>売却日</th><th>取得価格</th><th>売却価格</th>
+        <th>株数</th><th>損益(円)</th><th>損益率</th><th>売却理由</th><th>日記</th>
+      </tr></thead>
+      <tbody>${trades.map(t => {
+        const pnlPct = t.pnl_pct || 0;
+        const pnl    = t.pnl || 0;
+        const cls    = pnlPct >= 0 ? 'pnl-positive' : 'pnl-negative';
+        const sign   = pnlPct >= 0 ? '+' : '';
+        const diaryId = `${t.ticker}_${(t.exit_date||'').replace(/-/g,'')||''}`;
+        return `<tr>
+          <td><strong>${escHtml(t.ticker)}</strong><br><small style="color:var(--text-muted)">${escHtml(t.label||'')}</small></td>
+          <td>${t.entry_date||'—'}</td>
+          <td>${t.exit_date||t.logged_at?.slice(0,10)||'—'}</td>
+          <td>¥${(t.entry_price||0).toLocaleString()}</td>
+          <td>¥${(t.exit_price||0).toLocaleString()}</td>
+          <td>${t.shares||0}株</td>
+          <td class="${cls}">${sign}¥${Math.abs(pnl).toLocaleString()}</td>
+          <td class="${cls}">${sign}${pnlPct.toFixed(2)}%</td>
+          <td style="font-size:11px;color:var(--text-muted)">${escHtml(t.exit_reason||'')}</td>
+          <td><button class="btn-link" style="font-size:11px"
+            onclick="scrollToDiaryEntry('${escHtml(diaryId)}')">日記▼</button></td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table>`;
   } catch (e) {
     console.warn('実取引履歴取得失敗:', e);
   }
@@ -1536,65 +1647,6 @@ async function resumeTrader() {
 // ペーパートレード
 // ─────────────────────────────────────────────
 
-async function loadPaperTraderStatus() {
-  try {
-    const res = await fetch("/api/paper-trader/status");
-    const d = await res.json();
-    if (d.error) { document.getElementById("pt-msg").textContent = d.error; return; }
-    _renderPaperStatus(d);
-  } catch (e) { console.error("ペーパー状態取得失敗", e); }
-}
-
-function _renderPaperStatus(d) {
-  const fmt = v => (v >= 0 ? "+" : "") + v.toLocaleString("ja-JP", {maximumFractionDigits: 2});
-  const fmtY = v => "¥" + Math.abs(v).toLocaleString("ja-JP");
-
-  document.getElementById("pt-equity").textContent   = fmtY(d.total_equity);
-  document.getElementById("pt-cash").textContent     = fmtY(d.cash);
-  document.getElementById("pt-trades").textContent   = d.trade_count + "件";
-  document.getElementById("pt-winrate").textContent  = d.win_rate + "%";
-
-  const ret = d.total_return_pct;
-  const retEl = document.getElementById("pt-return");
-  retEl.textContent = (ret >= 0 ? "+" : "") + ret.toFixed(2) + "%";
-  retEl.style.color = ret >= 0 ? "var(--positive)" : "var(--negative)";
-
-  // 保有ポジション
-  const posBody = document.getElementById("pt-positions");
-  if (!d.positions || d.positions.length === 0) {
-    posBody.innerHTML = '<tr><td colspan="6" class="empty">保有なし</td></tr>';
-  } else {
-    posBody.innerHTML = d.positions.map(p => {
-      const pnlColor = p.pnl >= 0 ? "var(--positive)" : "var(--negative)";
-      return `<tr>
-        <td>${p.label || p.ticker}</td>
-        <td>${(p.entry_date || "").slice(0,10)}</td>
-        <td>¥${p.entry_price.toLocaleString("ja-JP")}</td>
-        <td>${p.current_price ? "¥" + p.current_price.toLocaleString("ja-JP") : "—"}</td>
-        <td style="color:${pnlColor}">${p.pnl >= 0 ? "+" : ""}¥${Math.abs(p.pnl).toLocaleString("ja-JP")}</td>
-        <td style="color:${pnlColor}">${p.pnl_pct >= 0 ? "+" : ""}${p.pnl_pct.toFixed(2)}%</td>
-      </tr>`;
-    }).join("");
-  }
-
-  // 直近取引
-  const histBody = document.getElementById("pt-history");
-  if (!d.recent_trades || d.recent_trades.length === 0) {
-    histBody.innerHTML = '<tr><td colspan="5" class="empty">取引なし</td></tr>';
-  } else {
-    histBody.innerHTML = d.recent_trades.map(t => {
-      const c = t.pnl >= 0 ? "var(--positive)" : "var(--negative)";
-      return `<tr>
-        <td>${t.label || t.ticker}</td>
-        <td>${(t.exit_date || "").slice(0,10)}</td>
-        <td style="color:${c}">${t.pnl >= 0 ? "+" : ""}¥${Math.abs(t.pnl).toLocaleString("ja-JP")}</td>
-        <td style="color:${c}">${t.pnl_pct >= 0 ? "+" : ""}${t.pnl_pct.toFixed(2)}%</td>
-        <td style="font-size:11px;color:var(--text-muted)">${t.reason || ""}</td>
-      </tr>`;
-    }).join("");
-  }
-}
-
 async function runPaperCycle() {
   const msgEl = document.getElementById("pt-msg");
   msgEl.textContent = "シグナル取得・実行中...（数分かかる場合があります）";
@@ -1606,10 +1658,14 @@ async function runPaperCycle() {
     });
     const d = await res.json();
     if (d.error) { msgEl.textContent = "エラー: " + d.error; return; }
-    const bought  = (d.bought  || []).map(b => `買い: ${b.ticker}`).join(", ");
-    const stopped = (d.stopped || []).map(s => `売り: ${s.ticker}`).join(", ");
-    msgEl.textContent = `完了 — ${bought || "買いなし"} / ${stopped || "売りなし"}  (市場: ${d.market_bullish ? "強気" : "弱気"})`;
-    if (d.portfolio) _renderPaperStatus(d.portfolio);
+    const bought  = (d.bought  || []).map(b => b.ticker).join(", ");
+    const stopped = (d.stopped || []).map(s => s.ticker).join(", ");
+    msgEl.textContent = `完了 — 買い: ${bought || "なし"} / 売り: ${stopped || "なし"}  (市場: ${d.market_bullish ? "強気" : "弱気"})`;
+    if (d.portfolio) {
+      _renderPaperKPIs(d.portfolio);
+      _renderPaperPositions(d.portfolio);
+      _renderPaperHistory(d.portfolio);
+    }
   } catch (e) {
     msgEl.textContent = "通信エラー: " + e.message;
   }
@@ -1619,7 +1675,7 @@ async function resetPaperTrader() {
   if (!confirm("ペーパーポートフォリオをリセットしますか？\n取引履歴・ポジションがすべて消去されます。")) return;
   try {
     await fetch("/api/paper-trader/reset", { method: "POST" });
-    await loadPaperTraderStatus();
+    await _loadPaperAutoData();
     document.getElementById("pt-msg").textContent = "リセット完了";
   } catch (e) { alert("リセット失敗: " + e.message); }
 }
@@ -1791,25 +1847,18 @@ function _applyTradingMode(mode) {
       : '実資金で自動売買中。kabuステーション® との接続が必要です。';
   }
 
-  // ペーパーパネルはペーパーモード時のみ表示
-  const paperPanel = document.getElementById('paper-panel');
-  if (paperPanel) paperPanel.style.display = isPaper ? '' : 'none';
+  // ペーパー専用ボタン
+  const pcontrols = document.getElementById('at-paper-controls');
+  if (pcontrols) pcontrols.style.display = isPaper ? 'flex' : 'none';
 
-  // ライブ専用セクションのヘッダーをモードに合わせて変更
-  const livePositionsHeader = document.querySelector('#at-positions-table')?.closest('.card')?.querySelector('.card-header');
-  if (livePositionsHeader) {
-    livePositionsHeader.childNodes[0].textContent = isPaper ? '💼 現在の保有ポジション（ライブモード専用）' : '💼 現在の保有ポジション（実取引）';
-  }
+  // トレード日記はライブモードのみ
+  const diaryCard = document.getElementById('at-diary-card');
+  if (diaryCard) diaryCard.style.display = isPaper ? 'none' : '';
+
+  // セットアップガイド切替
+  const guidePaper = document.getElementById('at-guide-paper');
+  const guideLive  = document.getElementById('at-guide-live');
+  if (guidePaper) guidePaper.style.display = isPaper ? '' : 'none';
+  if (guideLive)  guideLive.style.display  = isPaper ? 'none' : '';
 }
 
-// loadAutoTraderData に追加ロードを組み込む（上書き）
-const _origLoadAutoTraderData = loadAutoTraderData;
-loadAutoTraderData = async function () {
-  await Promise.all([
-    _origLoadAutoTraderData(),
-    loadTraderStatus(),
-    loadAtEquityChart(),
-    loadPaperTraderStatus(),
-    loadTradingMode(),
-  ]);
-};

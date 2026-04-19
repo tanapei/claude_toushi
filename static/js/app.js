@@ -1296,19 +1296,21 @@ function _renderPaperPositions(d) {
   const wrap = document.getElementById('at-positions-wrap');
   const positions = d.positions || [];
   if (!positions.length) {
-    wrap.innerHTML = '<table><tbody><tr><td colspan="6" class="empty">保有なし（シグナル発生後に自動で購入されます）</td></tr></tbody></table>';
+    wrap.innerHTML = '<table><tbody><tr><td colspan="7" class="empty">保有なし（シグナル発生後に自動で購入されます）</td></tr></tbody></table>';
     return;
   }
   wrap.innerHTML = `<table>
     <thead><tr>
-      <th>銘柄</th><th>取得日</th><th>取得価格</th><th>現在価格</th><th>損益</th><th>損益%</th>
+      <th>銘柄</th><th>取得日</th><th>取得価格</th><th>株数</th><th>現在価格</th><th>損益</th><th>損益%</th>
     </tr></thead>
     <tbody>${positions.map(p => {
       const cls = p.pnl >= 0 ? 'pnl-positive' : 'pnl-negative';
+      const shares = (p.shares||0).toLocaleString('ja-JP', {maximumFractionDigits:1});
       return `<tr>
         <td><strong>${escHtml(p.ticker)}</strong><br><small style="color:var(--text-muted)">${escHtml(p.label||'')}</small></td>
         <td>${(p.entry_date||'').slice(0,10)}</td>
         <td>¥${(p.entry_price||0).toLocaleString('ja-JP')}</td>
+        <td>${shares}株</td>
         <td>${p.current_price ? '¥'+p.current_price.toLocaleString('ja-JP') : '—'}</td>
         <td class="${cls}">${p.pnl>=0?'+':''}¥${Math.abs(p.pnl||0).toLocaleString('ja-JP')}</td>
         <td class="${cls}">${p.pnl_pct>=0?'+':''}${(p.pnl_pct||0).toFixed(2)}%</td>

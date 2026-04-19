@@ -1305,7 +1305,7 @@ function _renderPaperPositions(d) {
     </tr></thead>
     <tbody>${positions.map(p => {
       const cls = p.pnl >= 0 ? 'pnl-positive' : 'pnl-negative';
-      const shares = (p.shares||0).toLocaleString('ja-JP', {maximumFractionDigits:1});
+      const shares = Math.floor(p.shares||0).toLocaleString('ja-JP');
       return `<tr>
         <td><strong>${escHtml(p.ticker)}</strong><br><small style="color:var(--text-muted)">${escHtml(p.label||'')}</small></td>
         <td>${(p.entry_date||'').slice(0,10)}</td>

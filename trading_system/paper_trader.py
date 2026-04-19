@@ -62,26 +62,31 @@ class PaperTrader:
     # ─── 売買実行 ─────────────────────────────────────────
 
     def buy(self, ticker: str, price: float, score: int = 0, market: str = "JP") -> Optional[Dict]:
-        """買い実行。資金の1/MAX_POSITIONS を投資。"""
+        """買い実行。資金の1/MAX_POSITIONS を投資。株数は整数に切り捨て（実取引に近い形）。"""
         if ticker in self.positions:
             return None
         if len(self.positions) >= MAX_POSITIONS:
             logger.info(f"[ペーパー] 最大保有数到達 ({MAX_POSITIONS}件)、{ticker} 見送り")
             return None
 
-        invest = min(self.initial_capital / MAX_POSITIONS, self.cash)
-        if invest < price:
+        budget = min(self.initial_capital / MAX_POSITIONS, self.cash)
+        if budget < price:
             logger.info(f"[ペーパー] 資金不足: {ticker}")
             return None
 
-        shares = invest / price
+        shares = int(budget / price)  # 整数株に切り捨て
+        if shares == 0:
+            logger.info(f"[ペーパー] 株価が高すぎて1株購入できません: {ticker} ¥{price:,.0f}")
+            return None
+
+        invest = shares * price  # 実際の投資額（端数なし）
         self.cash -= invest
         pos = {
             "ticker":        ticker,
             "label":         get_ticker_label(ticker),
             "market":        market,
             "entry_price":   round(price, 4),
-            "shares":        round(shares, 4),
+            "shares":        shares,
             "invested":      round(invest),
             "highest_price": round(price, 4),
             "entry_date":    datetime.now().strftime("%Y-%m-%d %H:%M"),
@@ -89,7 +94,7 @@ class PaperTrader:
         }
         self.positions[ticker] = pos
         self._save()
-        logger.info(f"[ペーパー] 買い: {ticker} @ {price:.2f} × {shares:.2f}株 (投資額 ¥{invest:,.0f})")
+        logger.info(f"[ペーパー] 買い: {ticker} @ {price:,.0f}円 × {shares}株 = ¥{invest:,.0f}")
         return pos
 
     def sell(self, ticker: str, price: float, reason: str) -> Optional[Dict]:

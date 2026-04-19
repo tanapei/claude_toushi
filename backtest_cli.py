@@ -22,7 +22,7 @@ ROOT = Path(__file__).parent
 sys.path.insert(0, str(ROOT))
 
 from trading_system.backtest import Backtester
-from trading_system.config import BACKTEST_START, BACKTEST_END
+from trading_system.config import BACKTEST_START, BACKTEST_END, JP_UNIVERSE, TICKER_BLACKLIST
 
 
 # ─────────────────────────────────────────────────────
@@ -130,11 +130,13 @@ def run_single(params: dict, save: bool = True) -> dict:
         "take_profit_pct":   params["take_profit_pct"],
         "trailing_stop_pct": params["trailing_stop_pct"],
     }
+    tickers = [t for t in JP_UNIVERSE if t not in TICKER_BLACKLIST]
     bt = Backtester(
         start_date=params["start_date"],
         end_date=params["end_date"],
         strategy_mode="factor",
         factor_params=factor_params,
+        tickers=tickers,
     )
     result = bt.run(save_results=save, analyze=False)
     summary = result.get("summary", {})

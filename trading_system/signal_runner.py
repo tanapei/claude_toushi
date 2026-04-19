@@ -134,17 +134,34 @@ class SignalRunner:
         return data
 
     def _check_market_regime(self) -> bool:
-        """インデックスが200日EMAより上なら強気（True）。"""
+        """
+        強気相場の判定（2条件すべて満たす必要あり）:
+          1. インデックス > 200日EMA（中長期トレンド）
+          2. 直近20日高値から -5% 以内（急落検知）
+        """
         index = "^N225" if self.market == "JP" else "^IXIC"
         try:
             raw = yf.download(index, period="250d", progress=False, auto_adjust=True)
             if raw.empty:
                 return True
-            close   = raw["Close"].squeeze()
-            ema200  = close.ewm(span=200, adjust=False).mean()
-            bullish = float(close.iloc[-1]) > float(ema200.iloc[-1])
-            logger.info(f"市場レジーム ({index}): {'強気' if bullish else '弱気'}")
-            return bullish
+            close  = raw["Close"].squeeze()
+            ema200 = close.ewm(span=200, adjust=False).mean()
+            latest = float(close.iloc[-1])
+
+            # 条件1: 200日EMAより上
+            if latest <= float(ema200.iloc[-1]):
+                logger.info(f"市場レジーム ({index}): 弱気（200日EMA下）")
+                return False
+
+            # 条件2: 直近20日高値から-5%超の急落検知
+            recent_high = float(close.iloc[-20:].max())
+            if recent_high > 0 and (latest - recent_high) / recent_high < -0.05:
+                drop = (latest - recent_high) / recent_high * 100
+                logger.info(f"市場レジーム ({index}): 急落検知（高値から{drop:.1f}%）")
+                return False
+
+            logger.info(f"市場レジーム ({index}): 強気")
+            return True
         except Exception as e:
             logger.warning(f"市場レジーム取得エラー: {e}")
             return True

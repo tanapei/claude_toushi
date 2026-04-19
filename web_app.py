@@ -417,6 +417,14 @@ def index():
     return render_template("index.html")
 
 
+@app.route("/api/trading-mode", methods=["GET"])
+def get_trading_mode():
+    """現在の取引モードを返す。"""
+    s = _load_settings()
+    mode = s.get("trading_mode", "paper")
+    return jsonify({"trading_mode": mode, "is_paper": mode != "live"})
+
+
 @app.route("/api/settings", methods=["GET"])
 def get_settings():
     """現在の設定を返す（センシティブ項目はマスク）。"""

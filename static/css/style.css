@@ -57,6 +57,74 @@ body {
 .logo-icon { font-size: 22px; }
 .logo-text  { font-size: 16px; font-weight: 700; letter-spacing: .03em; }
 
+/* ── 取引モードバッジ（ヘッダー） ── */
+.mode-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  border: 1px solid;
+  white-space: nowrap;
+}
+.mode-badge.mode-paper {
+  color: #4f8ef7;
+  background: rgba(79,142,247,.12);
+  border-color: rgba(79,142,247,.35);
+}
+.mode-badge.mode-live {
+  color: #f7c948;
+  background: rgba(247,201,72,.12);
+  border-color: rgba(247,201,72,.4);
+  animation: mode-live-pulse 2s ease-in-out infinite;
+}
+@keyframes mode-live-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: .7; }
+}
+
+/* ── タブ内モードバッジ ── */
+.tab-mode-badge {
+  display: inline-block;
+  font-size: 10px;
+  margin-left: 3px;
+  vertical-align: middle;
+}
+
+/* ── 自動トレードタブ モードバナー ── */
+.at-mode-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 20px;
+  border-radius: 12px;
+  margin-bottom: 20px;
+  border: 1.5px solid;
+}
+.at-mode-banner-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.at-mode-icon { font-size: 32px; line-height: 1; }
+.at-mode-title { font-size: 15px; font-weight: 700; margin-bottom: 3px; }
+.at-mode-desc  { font-size: 12px; opacity: .8; }
+.at-mode-banner.at-mode-paper {
+  background: rgba(79,142,247,.07);
+  border-color: rgba(79,142,247,.3);
+  color: #a8c5fb;
+}
+.at-mode-banner.at-mode-paper .at-mode-title { color: #4f8ef7; }
+.at-mode-banner.at-mode-live {
+  background: rgba(247,201,72,.07);
+  border-color: rgba(247,201,72,.35);
+  color: #f7e9a0;
+}
+.at-mode-banner.at-mode-live .at-mode-title { color: #f7c948; }
+
 .tabs { display: flex; gap: 4px; flex-wrap: wrap; }
 .tab {
   padding: 6px 14px;

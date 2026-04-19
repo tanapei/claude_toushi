@@ -19,6 +19,7 @@ document.addEventListener('DOMContentLoaded', () => {
   loadDashboard();
   loadPortfolio();
   loadVirtualPortfolioList();
+  loadTradingMode();
 
   // シグナルタブを開いたら自動で最新シグナルを取得・生成
   document.querySelectorAll('.tab').forEach(btn => {
@@ -1699,6 +1700,7 @@ async function saveSettings() {
     });
     const msg = document.getElementById("settings-save-msg");
     msg.textContent = "✓ 保存しました";
+    loadTradingMode();
     setTimeout(() => { msg.textContent = ""; closeSettings(); }, 1200);
   } catch (e) {
     document.getElementById("settings-save-msg").textContent = "保存に失敗しました";
@@ -1747,6 +1749,59 @@ function togglePwd(id, btn) {
   }
 }
 
+// ─────────────────────────────────────────────
+// 取引モード表示
+// ─────────────────────────────────────────────
+
+async function loadTradingMode() {
+  try {
+    const res = await fetch('/api/trading-mode');
+    const d = await res.json();
+    _applyTradingMode(d.trading_mode || 'paper');
+  } catch (e) {
+    console.warn('取引モード取得失敗:', e);
+  }
+}
+
+function _applyTradingMode(mode) {
+  const isPaper = mode !== 'live';
+
+  // ヘッダーバッジ
+  const hBadge = document.getElementById('header-mode-badge');
+  if (hBadge) {
+    hBadge.textContent = isPaper ? '📄 ペーパー' : '💴 ライブ';
+    hBadge.className   = isPaper ? 'mode-badge mode-paper' : 'mode-badge mode-live';
+  }
+
+  // タブ内バッジ
+  const tBadge = document.getElementById('tab-mode-badge');
+  if (tBadge) {
+    tBadge.textContent = isPaper ? '📄' : '💴';
+    tBadge.className   = isPaper ? 'tab-mode-badge tab-mode-paper' : 'tab-mode-badge tab-mode-live';
+  }
+
+  // 自動トレードタブ内バナー
+  const banner = document.getElementById('at-mode-banner');
+  if (banner) {
+    banner.className = isPaper ? 'at-mode-banner at-mode-paper' : 'at-mode-banner at-mode-live';
+    document.getElementById('at-mode-icon').textContent  = isPaper ? '📄' : '💴';
+    document.getElementById('at-mode-title').textContent = isPaper ? 'ペーパートレードモード' : 'ライブトレードモード';
+    document.getElementById('at-mode-desc').textContent  = isPaper
+      ? '仮想資金で自動売買をシミュレート中。実際の注文は一切行いません。'
+      : '実資金で自動売買中。kabuステーション® との接続が必要です。';
+  }
+
+  // ペーパーパネルはペーパーモード時のみ表示
+  const paperPanel = document.getElementById('paper-panel');
+  if (paperPanel) paperPanel.style.display = isPaper ? '' : 'none';
+
+  // ライブ専用セクションのヘッダーをモードに合わせて変更
+  const livePositionsHeader = document.querySelector('#at-positions-table')?.closest('.card')?.querySelector('.card-header');
+  if (livePositionsHeader) {
+    livePositionsHeader.childNodes[0].textContent = isPaper ? '💼 現在の保有ポジション（ライブモード専用）' : '💼 現在の保有ポジション（実取引）';
+  }
+}
+
 // loadAutoTraderData に追加ロードを組み込む（上書き）
 const _origLoadAutoTraderData = loadAutoTraderData;
 loadAutoTraderData = async function () {
@@ -1755,5 +1810,6 @@ loadAutoTraderData = async function () {
     loadTraderStatus(),
     loadAtEquityChart(),
     loadPaperTraderStatus(),
+    loadTradingMode(),
   ]);
 };

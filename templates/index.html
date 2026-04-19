@@ -20,11 +20,12 @@
     <div class="logo">
       <span class="logo-icon">📈</span>
       <span class="logo-text">Claude 株式取引シミュレーター</span>
+      <span id="header-mode-badge" class="mode-badge mode-paper">📄 ペーパー</span>
     </div>
     <nav class="tabs" role="tablist">
       <button class="tab active" data-tab="dashboard"   role="tab">ダッシュボード</button>
       <button class="tab" data-tab="signal"       role="tab">📱 シグナル</button>
-      <button class="tab" data-tab="autotrader"   role="tab">🤖 自動トレード</button>
+      <button class="tab" data-tab="autotrader"   role="tab">🤖 自動トレード <span id="tab-mode-badge" class="tab-mode-badge tab-mode-paper">📄</span></button>
       <button class="tab" data-tab="run"          role="tab">バックテスト実行</button>
       <button class="tab" data-tab="trades"       role="tab">取引履歴</button>
       <button class="tab" data-tab="analysis"     role="tab">AI 分析</button>
@@ -582,6 +583,18 @@
   <!-- ─── 自動トレード タブ ─── -->
   <section class="tab-panel" id="panel-autotrader">
     <div class="section-title">🤖 自動トレード ダッシュボード</div>
+
+    <!-- 取引モードバナー -->
+    <div id="at-mode-banner" class="at-mode-banner at-mode-paper">
+      <div class="at-mode-banner-left">
+        <span id="at-mode-icon" class="at-mode-icon">📄</span>
+        <div>
+          <div id="at-mode-title" class="at-mode-title">ペーパートレードモード</div>
+          <div id="at-mode-desc" class="at-mode-desc">仮想資金で自動売買をシミュレート中。実際の注文は一切行いません。</div>
+        </div>
+      </div>
+      <button class="btn-secondary" onclick="openSettings()" style="font-size:12px;padding:5px 16px;white-space:nowrap">⚙ モード変更</button>
+    </div>
 
     <!-- ペーパートレードパネル -->
     <div id="paper-panel" class="card mb-20">

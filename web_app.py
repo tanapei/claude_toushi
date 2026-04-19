@@ -195,7 +195,6 @@ class ProgressBacktester:
             run_state.update(30, "ファクタースコアを計算中（数分かかります）...")
             backtester._factor_scores = backtester._precompute_factor_scores()
         else:
-            if self.strategy_mode != "factor":
             backtester._add_indicators()
 
         run_state.update(40, "シミュレーション実行中...")

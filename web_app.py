@@ -452,9 +452,19 @@ def save_settings():
 def test_kabu_connection():
     """kabuステーション® APIへの接続テストを行う。"""
     try:
-        from trading_system.kabu_client import KabuClient
-        client = KabuClient()
-        token = client.get_token()
+        # 保存済み設定を環境変数に反映してからクライアントを生成
+        s = _load_settings()
+        if s.get("kabu_api_password"):
+            os.environ["KABU_API_PASSWORD"] = s["kabu_api_password"]
+        if s.get("kabu_api_base_url"):
+            os.environ.setdefault("KABU_API_BASE_URL", s["kabu_api_base_url"])
+
+        import importlib
+        import trading_system.kabu_client as _kc
+        importlib.reload(_kc)          # 環境変数更新後にリロード
+
+        client = _kc.KabuClient()
+        token = client._refresh_token()
         if token:
             return jsonify({"status": "ok", "message": "接続成功 — トークン取得完了"})
         return jsonify({"status": "error", "message": "トークン取得失敗（パスワードを確認してください）"})

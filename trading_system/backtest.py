@@ -437,13 +437,14 @@ class Backtester:
 
     def _is_market_bullish(self, date: pd.Timestamp) -> bool:
         """
-        日経225が市場レジームEMAを上回っていれば True（強気相場）。
+        強気相場の判定（2条件すべてを満たす必要あり）:
+          1. 日経225 > 200日EMA（中長期トレンド）
+          2. 日経225が直近20日高値から -5% 以内（急落検知）
         データがない場合は True を返してフィルタをスキップする。
         """
         if self.nikkei_data.empty:
             return True
 
-        # 当日以前で最も近い日付を取得
         available = self.nikkei_data.index[self.nikkei_data.index <= date]
         if len(available) == 0:
             return True
@@ -457,7 +458,17 @@ class Backtester:
         if math.isnan(close) or math.isnan(regime_ema):
             return True
 
-        return float(close) > float(regime_ema)
+        # 条件1: 中長期トレンド（200日EMA上）
+        if float(close) <= float(regime_ema):
+            return False
+
+        # 条件2: 急落検知（直近20日高値から-5%超の下落で新規エントリー停止）
+        recent = available[-20:]
+        recent_high = float(self.nikkei_data.loc[recent, "close"].max())
+        if recent_high > 0 and (float(close) - recent_high) / recent_high < -0.05:
+            return False
+
+        return True
 
     def _close_all_positions(self) -> None:
         """バックテスト終了時に残ポジションを全決済する。"""

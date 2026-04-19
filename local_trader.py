@@ -37,6 +37,18 @@ load_dotenv(ROOT / ".env")
 from trading_system.config import LOGS_DIR, DATA_DIR
 from trading_system.kabu_client import KabuClient, KabuAPIError
 
+
+def _trading_mode() -> str:
+    """settings.json から取引モードを読み込む（"paper" or "live"）。"""
+    try:
+        settings_file = ROOT / "settings.json"
+        if settings_file.exists():
+            import json as _json
+            return _json.loads(settings_file.read_text(encoding="utf-8")).get("trading_mode", "paper")
+    except Exception:
+        pass
+    return "paper"  # デフォルトはペーパー（安全側）
+
 JST = pytz.timezone("Asia/Tokyo")
 
 # ─── ロギング設定 ──────────────────────────────────────────────
@@ -101,17 +113,15 @@ def morning_routine():
         logger.info("⏸ 一時停止中のため朝の発注をスキップ")
         return
 
+    mode = _trading_mode()
     logger.info("╔══════════════════════════════════╗")
-    logger.info("║  朝の自動発注処理 開始            ║")
+    logger.info(f"║  朝の自動発注処理 開始 [{mode.upper()}]  ║")
     logger.info("╚══════════════════════════════════╝")
 
     try:
         from trading_system.signal_runner import SignalRunner
-        from trading_system.order_executor import OrderExecutor
 
-        executor = OrderExecutor()
-
-        for market in ["JP"]:   # US株は今後対応予定
+        for market in ["JP"]:
             logger.info(f"[{market}] シグナル生成中...")
             runner = SignalRunner(market=market)
             result = runner.run()
@@ -123,30 +133,10 @@ def morning_routine():
             regime = "強気" if result.get("market_bullish") else "弱気"
             logger.info(f"[{market}] 市場レジーム: {regime}")
 
-            # ① 売りシグナルを先に処理（ポジション解放）
-            sell_signals = result.get("sell_signals", [])
-            if sell_signals:
-                logger.info(f"[{market}] 売りシグナル {len(sell_signals)}件")
-                for r in executor.execute_sell_signals(sell_signals):
-                    if r["status"] == "ordered":
-                        logger.info(f"  ✓ 売り: {r['ticker']}  P&L {r.get('pnl_pct', 0):+.1f}%")
-                    else:
-                        logger.warning(f"  ✗ 売りエラー: {r['ticker']} — {r.get('error')}")
-
-            # ② 買いシグナルを処理
-            buy_signals = result.get("buy_signals", [])
-            if buy_signals:
-                logger.info(f"[{market}] 買いシグナル {len(buy_signals)}件")
-                for r in executor.execute_buy_signals(buy_signals):
-                    if r["status"] == "ordered":
-                        logger.info(f"  ✓ 買い: {r['ticker']}  {r['qty']}株  ¥{r['invested']:,}")
-                    elif r["status"] == "skipped":
-                        logger.info(f"  - スキップ: {r['ticker']} — {r.get('error')}")
-                    else:
-                        logger.warning(f"  ✗ 買いエラー: {r['ticker']} — {r.get('error')}")
-
-            if not sell_signals and not buy_signals:
-                logger.info(f"[{market}] シグナルなし（本日は取引なし）")
+            if mode == "paper":
+                _morning_paper(market, result)
+            else:
+                _morning_live(market, result)
 
     except Exception as e:
         logger.exception(f"朝の処理で予期しないエラー: {e}")
@@ -159,6 +149,81 @@ def morning_routine():
     logger.info("朝の自動発注処理 完了")
 
 
+def _morning_paper(market: str, result: dict):
+    """ペーパーモード: シグナルに基づいて仮想売買を実行する。"""
+    import json as _json
+    from trading_system.paper_trader import PaperTrader
+    from trading_system.factor_scorer import score_universe
+
+    settings_file = ROOT / "settings.json"
+    capital = 1_000_000
+    if settings_file.exists():
+        try:
+            capital = float(_json.loads(settings_file.read_text("utf-8")).get("paper_initial_capital", 1_000_000))
+        except Exception:
+            pass
+
+    pt = PaperTrader(initial_capital=capital)
+    runner_data = result.get("_price_data", {})  # あれば再利用
+
+    buy_signals  = result.get("buy_signals", [])
+    sell_signals = result.get("sell_signals", [])
+
+    # 売りシグナルを先に処理
+    for sig in sell_signals:
+        ticker = sig["ticker"]
+        price  = sig.get("current_price")
+        if price and pt.positions.get(ticker):
+            rec = pt.sell(ticker, price, sig.get("reason", "シグナル売り"))
+            if rec:
+                sign = "✅" if rec["pnl"] >= 0 else "🔴"
+                logger.info(f"[ペーパー] {sign} 売り: {ticker}  {rec['pnl_pct']:+.1f}%  {rec['reason']}")
+
+    # 買いシグナルを処理
+    for sig in buy_signals:
+        ticker = sig["ticker"]
+        price  = sig.get("price") or sig.get("current_price")
+        if not price and runner_data.get(ticker) is not None:
+            df = runner_data[ticker]
+            price = float(df["close"].iloc[-1]) if not df.empty else None
+        if price:
+            pos = pt.buy(ticker, price, score=sig.get("score", 0), market=market)
+            if pos:
+                logger.info(f"[ペーパー] 📈 買い: {ticker} @ ¥{price:,.0f} (スコア{sig.get('score',0)})")
+
+    if not buy_signals and not sell_signals:
+        logger.info(f"[ペーパー][{market}] シグナルなし")
+
+
+def _morning_live(market: str, result: dict):
+    """ライブモード: kabu APIで実際に発注する。"""
+    from trading_system.order_executor import OrderExecutor
+    executor = OrderExecutor()
+
+    sell_signals = result.get("sell_signals", [])
+    if sell_signals:
+        logger.info(f"[{market}] 売りシグナル {len(sell_signals)}件")
+        for r in executor.execute_sell_signals(sell_signals):
+            if r["status"] == "ordered":
+                logger.info(f"  ✓ 売り: {r['ticker']}  P&L {r.get('pnl_pct', 0):+.1f}%")
+            else:
+                logger.warning(f"  ✗ 売りエラー: {r['ticker']} — {r.get('error')}")
+
+    buy_signals = result.get("buy_signals", [])
+    if buy_signals:
+        logger.info(f"[{market}] 買いシグナル {len(buy_signals)}件")
+        for r in executor.execute_buy_signals(buy_signals):
+            if r["status"] == "ordered":
+                logger.info(f"  ✓ 買い: {r['ticker']}  {r['qty']}株  ¥{r['invested']:,}")
+            elif r["status"] == "skipped":
+                logger.info(f"  - スキップ: {r['ticker']} — {r.get('error')}")
+            else:
+                logger.warning(f"  ✗ 買いエラー: {r['ticker']} — {r.get('error')}")
+
+    if not sell_signals and not buy_signals:
+        logger.info(f"[{market}] シグナルなし（本日は取引なし）")
+
+
 # ─── ポジション監視 ───────────────────────────────────────────
 
 def monitor_routine():
@@ -168,26 +233,51 @@ def monitor_routine():
     if is_paused():
         return
 
-    try:
-        from trading_system.order_executor import OrderExecutor
-        executor = OrderExecutor()
+    mode = _trading_mode()
 
-        if executor.portfolio.count() == 0:
-            return  # 保有なし
+    if mode == "paper":
+        try:
+            from trading_system.paper_trader import PaperTrader
+            from trading_system.data_fetcher import load_universe_data
+            from trading_system.config import VALID_UNIVERSE
 
-        results = executor.check_and_execute_stops()
-        for r in results:
-            if r["status"] == "ordered":
+            pt = PaperTrader()
+            if not pt.positions:
+                return
+
+            tickers = list(pt.positions.keys())
+            data = load_universe_data(tickers=tickers, period="5d")
+            results = pt.check_stops(data)
+            for r in results:
+                sign = "✅" if r["pnl"] >= 0 else "🔴"
                 logger.info(
-                    f"[自動売却] {r['ticker']}  "
+                    f"[ペーパー自動売却] {sign} {r['ticker']}  "
                     f"P&L {r.get('pnl_pct', 0):+.1f}%  "
                     f"理由: {r.get('reason', '')}"
                 )
+        except Exception as e:
+            logger.exception(f"ペーパーポジション監視エラー: {e}")
+    else:
+        try:
+            from trading_system.order_executor import OrderExecutor
+            executor = OrderExecutor()
 
-    except KabuAPIError as e:
-        logger.error(f"ポジション監視 API エラー: {e}")
-    except Exception as e:
-        logger.exception(f"ポジション監視エラー: {e}")
+            if executor.portfolio.count() == 0:
+                return  # 保有なし
+
+            results = executor.check_and_execute_stops()
+            for r in results:
+                if r["status"] == "ordered":
+                    logger.info(
+                        f"[自動売却] {r['ticker']}  "
+                        f"P&L {r.get('pnl_pct', 0):+.1f}%  "
+                        f"理由: {r.get('reason', '')}"
+                    )
+
+        except KabuAPIError as e:
+            logger.error(f"ポジション監視 API エラー: {e}")
+        except Exception as e:
+            logger.exception(f"ポジション監視エラー: {e}")
 
 
 # ─── 引け後の改善分析 ─────────────────────────────────────────
@@ -239,21 +329,25 @@ def main():
     if is_paused():
         logger.warning("⚠ 一時停止フラグが立っています。取引はスキップされます（改善分析は実行されます）。")
 
-    # kabuステーション® 接続確認
-    logger.info("kabuステーション® API 接続確認中...")
-    try:
-        client  = KabuClient()
-        wallet  = client.get_wallet_cash()
-        balance = wallet.get("StockAccountWallet", 0)
-        logger.info(f"接続OK ✓  現物買付余力: ¥{balance:,.0f}")
-    except KabuAPIError as e:
-        logger.warning("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        logger.warning(f"kabuステーション® に接続できません: {e}")
-        logger.warning("取引機能は無効で起動します（動作確認モード）。")
-        logger.warning("kabuステーション® 起動後に再起動してください。")
-        logger.warning("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    except Exception as e:
-        logger.warning(f"接続確認エラー（起動は続行）: {e}")
+    # kabuステーション® 接続確認（ライブモード時のみ）
+    mode = _trading_mode()
+    if mode == "paper":
+        logger.info(f"取引モード: ペーパー（仮想売買）— kabuステーション® 接続不要")
+    else:
+        logger.info("kabuステーション® API 接続確認中...")
+        try:
+            client  = KabuClient()
+            wallet  = client.get_wallet_cash()
+            balance = wallet.get("StockAccountWallet", 0)
+            logger.info(f"接続OK ✓  現物買付余力: ¥{balance:,.0f}")
+        except KabuAPIError as e:
+            logger.warning("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            logger.warning(f"kabuステーション® に接続できません: {e}")
+            logger.warning("取引機能は無効で起動します（動作確認モード）。")
+            logger.warning("kabuステーション® 起動後に再起動してください。")
+            logger.warning("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        except Exception as e:
+            logger.warning(f"接続確認エラー（起動は続行）: {e}")
 
     _setup_schedule()
     logger.info("スケジューラー稼働中... (Ctrl+C で停止)")

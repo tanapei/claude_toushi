@@ -462,10 +462,10 @@ class Backtester:
         if float(close) <= float(regime_ema):
             return False
 
-        # 条件2: 急落検知（直近20日高値から-7%超の下落で新規エントリー停止）
+        # 条件2: 急落検知（直近20日高値から-5%超の下落で新規エントリー停止）
         recent = available[-20:]
         recent_high = float(self.nikkei_data.loc[recent, "close"].max())
-        if recent_high > 0 and (float(close) - recent_high) / recent_high < -0.07:
+        if recent_high > 0 and (float(close) - recent_high) / recent_high < -0.05:
             return False
 
         return True

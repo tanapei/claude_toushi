@@ -616,6 +616,23 @@ def paper_trader_reset():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/paper-trader/equity")
+def paper_trader_equity():
+    """ペーパートレードの資産推移履歴を返す。"""
+    try:
+        pt = _get_paper_trader()
+        history = pt.equity_history
+        return jsonify({
+            "labels":          [e["date"] for e in history],
+            "equity":          [e["total_equity"] for e in history],
+            "cash":            [e["cash"] for e in history],
+            "position_value":  [e["position_value"] for e in history],
+            "initial_capital": round(pt.initial_capital),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/config/defaults")
 def get_defaults():
     """デフォルト設定を返す"""

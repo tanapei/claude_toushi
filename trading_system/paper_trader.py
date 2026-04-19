@@ -29,6 +29,7 @@ class PaperTrader:
         self.cash: float = initial_capital
         self.positions: Dict[str, Dict] = {}
         self.trade_history: List[Dict] = []
+        self.equity_history: List[Dict] = []
         self._load()
 
     # ─── 永続化 ──────────────────────────────────────────
@@ -41,10 +42,35 @@ class PaperTrader:
                 self.initial_capital= raw.get("initial_capital", self.initial_capital)
                 self.positions      = raw.get("positions", {})
                 self.trade_history  = raw.get("trade_history", [])
+                self.equity_history = raw.get("equity_history", [])
             except Exception as e:
                 logger.warning(f"ペーパーポートフォリオ読み込みエラー: {e}")
 
-    def _save(self):
+    def _record_equity_snapshot(self, current_prices: Optional[Dict] = None):
+        """本日の資産スナップショットを記録する（1日1件、最大365日分保持）。
+        current_prices: {ticker: 現在値} があれば時価評価、なければ取得原価で計算。
+        """
+        today = datetime.now().strftime("%Y-%m-%d")
+        if current_prices:
+            position_value = sum(
+                current_prices.get(t, pos["entry_price"]) * pos["shares"]
+                for t, pos in self.positions.items()
+            )
+        else:
+            position_value = sum(pos["invested"] for pos in self.positions.values())
+
+        snapshot = {
+            "date":           today,
+            "total_equity":   round(self.cash + position_value),
+            "cash":           round(self.cash),
+            "position_value": round(position_value),
+        }
+        self.equity_history = [e for e in self.equity_history if e["date"] != today]
+        self.equity_history.append(snapshot)
+        self.equity_history = sorted(self.equity_history, key=lambda x: x["date"])[-365:]
+
+    def _save(self, current_prices: Optional[Dict] = None):
+        self._record_equity_snapshot(current_prices)
         try:
             PAPER_FILE.write_text(
                 json.dumps({
@@ -52,6 +78,7 @@ class PaperTrader:
                     "cash":            self.cash,
                     "positions":       self.positions,
                     "trade_history":   self.trade_history,
+                    "equity_history":  self.equity_history,
                     "updated_at":      datetime.now().isoformat(),
                 }, ensure_ascii=False, indent=2),
                 encoding="utf-8",
@@ -165,8 +192,13 @@ class PaperTrader:
                 if record:
                     executed.append(record)
 
-        if executed:
-            self._save()
+        # ライブ価格でスナップショットを記録（5分ごとの監視時に時価評価）
+        current_prices = {
+            t: float(data[t]["close"].iloc[-1])
+            for t in self.positions
+            if t in data and not data[t].empty
+        }
+        self._save(current_prices)
         return executed
 
     # ─── 状態取得 ─────────────────────────────────────────
@@ -228,5 +260,6 @@ class PaperTrader:
         self.cash = initial_capital
         self.positions = {}
         self.trade_history = []
+        self.equity_history = []
         self._save()
         logger.info(f"[ペーパー] リセット完了 (初期資金 ¥{initial_capital:,.0f})")

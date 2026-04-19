@@ -1271,6 +1271,7 @@ async function _loadPaperAutoData() {
   } catch (e) {
     console.warn('ペーパーデータ取得失敗:', e);
   }
+  await _loadPaperEquityChart();
 }
 
 function _setKV(i, label, val, cls) {
@@ -1586,6 +1587,87 @@ async function loadAtEquityChart() {
     });
   } catch (e) {
     console.warn('累積損益チャート取得失敗:', e);
+  }
+}
+
+// ─── ペーパートレード 資産推移チャート ────────────────────────
+
+async function _loadPaperEquityChart() {
+  try {
+    const res  = await fetch('/api/paper-trader/equity');
+    const data = await res.json();
+    if (data.error || !data.labels || data.labels.length < 2) {
+      document.getElementById('at-equity-card').style.display = 'none';
+      return;
+    }
+
+    const card = document.getElementById('at-equity-card');
+    card.style.display = '';
+    card.querySelector('.card-header').textContent = '📈 資産推移（ペーパー）';
+
+    const ctx = document.getElementById('at-equity-chart').getContext('2d');
+    if (_atEquityChart) _atEquityChart.destroy();
+
+    const equities = data.equity || [];
+    const initial  = data.initial_capital || equities[0] || 1;
+    const colors   = equities.map(v => v >= initial ? 'rgba(62,207,142,0.85)' : 'rgba(247,95,95,0.85)');
+
+    _atEquityChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: data.labels,
+        datasets: [
+          {
+            label: '総資産',
+            data: equities,
+            borderColor: 'rgba(79,142,247,1)',
+            backgroundColor: 'rgba(79,142,247,0.08)',
+            borderWidth: 2,
+            pointBackgroundColor: colors,
+            pointRadius: 4,
+            fill: true,
+            tension: 0.3,
+          },
+          {
+            label: '初期資金',
+            data: data.labels.map(() => initial),
+            borderColor: 'rgba(124,133,162,0.4)',
+            borderWidth: 1,
+            borderDash: [6, 3],
+            pointRadius: 0,
+            fill: false,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { labels: { color: '#7c85a2', usePointStyle: true, boxWidth: 10 } },
+          tooltip: {
+            callbacks: {
+              label: ctx => {
+                const v = ctx.parsed.y;
+                const diff = v - initial;
+                const pct  = ((diff / initial) * 100).toFixed(2);
+                if (ctx.datasetIndex === 1) return ` 初期: ¥${v.toLocaleString('ja-JP')}`;
+                return ` 総資産: ¥${v.toLocaleString('ja-JP')}  (${diff>=0?'+':''}${pct}%)`;
+              },
+            },
+          },
+        },
+        scales: {
+          x: { ticks: { color: '#7c85a2', maxTicksLimit: 10 }, grid: { color: '#2e3350' } },
+          y: {
+            ticks: { color: '#7c85a2', callback: v => `¥${(v/10000).toFixed(0)}万` },
+            grid: { color: '#2e3350' },
+          },
+        },
+      },
+    });
+  } catch (e) {
+    console.warn('ペーパー資産推移チャート取得失敗:', e);
   }
 }
 

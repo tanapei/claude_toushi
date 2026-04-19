@@ -181,6 +181,14 @@ US_UNIVERSE = [
     "XLF",    # 金融セクター
 ]
 
+# =============================================
+# 除外銘柄リスト（両バックテストで一貫して低勝率）
+# =============================================
+TICKER_BLACKLIST = [
+    "4755.T",  # 楽天グループ: 勝率11-29%、両バックテストでワースト
+    "7269.T",  # スズキ: 勝率20-22%、両バックテストでワースト
+]
+
 # 後方互換性
-VALID_UNIVERSE  = JP_UNIVERSE
-STOCK_UNIVERSE  = JP_UNIVERSE
+VALID_UNIVERSE  = [t for t in JP_UNIVERSE if t not in TICKER_BLACKLIST]
+STOCK_UNIVERSE  = VALID_UNIVERSE

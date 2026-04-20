@@ -90,6 +90,7 @@ class SignalRunner:
             "market_bullish": market_bullish,
             "top_scored": scored[:15],
             "timestamp": datetime.now().isoformat(),
+            "_price_data": data,  # 価格データを渡す（_morning_paper等で再利用）
         }
 
         logger.info(

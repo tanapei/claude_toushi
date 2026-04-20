@@ -156,8 +156,10 @@ class PaperTrader:
 
     # ─── 自動ストップ確認 ─────────────────────────────────
 
-    def check_stops(self, data: Dict) -> List[Dict]:
+    def check_stops(self, data: Optional[Dict]) -> List[Dict]:
         """保有中ポジションの損切り・利確・トレーリングを確認して自動売却。"""
+        if not data:
+            return []
         executed = []
         for ticker, pos in list(self.positions.items()):
             if ticker not in data:

@@ -228,35 +228,38 @@ def _morning_paper(market: str, result: dict):
             pass
 
     pt = PaperTrader(initial_capital=capital)
-    runner_data = result.get("_price_data", {})  # あれば再利用
+    price_data = result.get("_price_data", {})  # signal_runner が設定した価格データ
 
-    buy_signals  = result.get("buy_signals", [])
-    sell_signals = result.get("sell_signals", [])
+    # ── 売り: ペーパーポジションを price_data で値洗いして損切り・利確判定 ──
+    if pt.positions and price_data:
+        stopped = pt.check_stops(price_data)
+        for rec in stopped:
+            sign = "✅" if rec["pnl"] >= 0 else "🔴"
+            logger.info(f"[ペーパー] {sign} 自動売却: {rec['ticker']}  {rec['pnl_pct']:+.1f}%  {rec['reason']}")
 
-    # 売りシグナルを先に処理
-    for sig in sell_signals:
-        ticker = sig["ticker"]
-        price  = sig.get("current_price")
-        if price and pt.positions.get(ticker):
-            rec = pt.sell(ticker, price, sig.get("reason", "シグナル売り"))
-            if rec:
-                sign = "✅" if rec["pnl"] >= 0 else "🔴"
-                logger.info(f"[ペーパー] {sign} 売り: {ticker}  {rec['pnl_pct']:+.1f}%  {rec['reason']}")
-
-    # 買いシグナルを処理
+    # ── 買い: buy_signals のティッカーを price_data から価格取得して購入 ──
+    buy_signals = result.get("buy_signals", [])
+    bought_count = 0
     for sig in buy_signals:
         ticker = sig["ticker"]
-        price  = sig.get("price") or sig.get("current_price")
-        if not price and runner_data.get(ticker) is not None:
-            df = runner_data[ticker]
-            price = float(df["close"].iloc[-1]) if not df.empty else None
-        if price:
-            pos = pt.buy(ticker, price, score=sig.get("score", 0), market=market)
-            if pos:
-                logger.info(f"[ペーパー] 📈 買い: {ticker} @ ¥{price:,.0f} (スコア{sig.get('score',0)})")
+        # price_data（DataFrame形式）から終値を取得
+        price = None
+        if price_data.get(ticker) is not None:
+            df = price_data[ticker]
+            if not df.empty:
+                price = float(df["close"].iloc[-1])
+        if not price:
+            logger.warning(f"[ペーパー] {ticker} の価格が取得できず購入スキップ")
+            continue
+        pos = pt.buy(ticker, price, score=sig.get("score", 0), market=market)
+        if pos:
+            bought_count += 1
+            logger.info(f"[ペーパー] 📈 買い: {ticker} @ ¥{price:,.0f} (スコア{sig.get('score',0)})")
 
-    if not buy_signals and not sell_signals:
-        logger.info(f"[ペーパー][{market}] シグナルなし")
+    if not buy_signals:
+        logger.info(f"[ペーパー][{market}] 買いシグナルなし（本日は購入見送り）")
+    else:
+        logger.info(f"[ペーパー][{market}] 買いシグナル{len(buy_signals)}件 → 購入{bought_count}件")
 
 
 def _morning_live(market: str, result: dict):

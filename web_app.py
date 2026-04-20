@@ -587,6 +587,57 @@ def _get_paper_trader():
     return PaperTrader(initial_capital=capital)
 
 
+def _fetch_spot_prices(tickers: list) -> dict:
+    """保有銘柄の現在値を取得する（kabu API優先・yfinanceフォールバック）。
+    settings.json のパスワードも参照する。
+    """
+    import pandas as pd
+    from datetime import date, timedelta
+
+    # ── kabu API を試みる（settings.json のパスワードも参照）────
+    s = _load_settings()
+    kabu_pass = s.get("kabu_api_password", "") or os.environ.get("KABU_API_PASSWORD", "")
+    if kabu_pass:
+        try:
+            from trading_system.kabu_client import KabuClient, KabuAPIError
+            import trading_system.config as _cfg
+            _cfg.KABU_API_PASSWORD = kabu_pass  # 実行時に上書き
+            client = KabuClient()
+            prices = {}
+            for ticker in tickers:
+                code = ticker.replace(".T", "").replace(".S", "")
+                board = client.get_board(code)
+                price = board.get("CurrentPrice") or board.get("CalcPrice")
+                if price:
+                    prices[ticker] = float(price)
+            if prices:
+                logger.info(f"[値洗い] kabu API で取得: {prices}")
+                return prices
+        except Exception as e:
+            logger.info(f"[値洗い] kabu API 失敗 → yfinance へ: {e}")
+
+    # ── yfinance フォールバック ────────────────────────────────
+    import yfinance as yf
+    start = (date.today() - timedelta(days=5)).strftime("%Y-%m-%d")
+    end   = (date.today() + timedelta(days=1)).strftime("%Y-%m-%d")
+    prices = {}
+    for ticker in tickers:
+        try:
+            raw = yf.download(ticker, start=start, end=end,
+                              progress=False, auto_adjust=True)
+            if raw.empty:
+                logger.warning(f"[値洗い] yfinance: {ticker} データなし")
+                continue
+            raw.columns = [c[0] if isinstance(c, tuple) else c for c in raw.columns]
+            close = raw["Close"].dropna()
+            if not close.empty:
+                prices[ticker] = float(close.iloc[-1])
+        except Exception as e:
+            logger.warning(f"[値洗い] yfinance {ticker} 失敗: {e}")
+    logger.info(f"[値洗い] yfinance で取得: {prices}")
+    return prices
+
+
 @app.route("/api/paper-trader/status")
 def paper_trader_status():
     """ペーパーポートフォリオの現在状態を返す。
@@ -596,21 +647,16 @@ def paper_trader_status():
         pt = _get_paper_trader()
         price_data = None
         if pt.positions:
-            try:
-                from trading_system.kabu_client import fetch_current_prices
-                import pandas as pd
-
-                tickers = list(pt.positions.keys())
-                spot = fetch_current_prices(tickers)
-                # get_status() が期待する {ticker: DataFrame{"close"}} 形式に変換
-                price_data = {
-                    t: pd.DataFrame({"close": [p]})
-                    for t, p in spot.items()
-                } if spot else None
-            except Exception as e:
-                logger.warning(f"現在値取得失敗（損益は0表示）: {e}")
+            import pandas as pd
+            tickers = list(pt.positions.keys())
+            spot = _fetch_spot_prices(tickers)
+            if spot:
+                price_data = {t: pd.DataFrame({"close": [p]}) for t, p in spot.items()}
+            else:
+                logger.warning("[値洗い] 全ティッカーの価格取得失敗 — 損益は0表示")
         return jsonify(pt.get_status(price_data))
     except Exception as e:
+        logger.exception("paper_trader_status エラー")
         return jsonify({"error": str(e)}), 500
 
 

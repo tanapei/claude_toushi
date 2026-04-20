@@ -589,10 +589,18 @@ def _get_paper_trader():
 
 @app.route("/api/paper-trader/status")
 def paper_trader_status():
-    """ペーパーポートフォリオの現在状態を返す。"""
+    """ペーパーポートフォリオの現在状態を返す（保有銘柄の現在値を取得して損益を計算）。"""
     try:
         pt = _get_paper_trader()
-        return jsonify(pt.get_status())
+        price_data = None
+        if pt.positions:
+            try:
+                from trading_system.data_fetcher import load_universe_data
+                tickers = list(pt.positions.keys())
+                price_data = load_universe_data(tickers=tickers, period="5d")
+            except Exception as e:
+                logger.warning(f"現在値取得失敗（損益は0表示）: {e}")
+        return jsonify(pt.get_status(price_data))
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

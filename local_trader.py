@@ -291,34 +291,48 @@ def _morning_live(market: str, result: dict):
 # ─── ポジション監視 ───────────────────────────────────────────
 
 def monitor_routine():
-    """5分ごと（取引時間中のみ）: 損切り・利確・トレーリングストップを確認して自動売却する。"""
+    """5分ごと: ステータスをログに記録し、取引時間中は損切り・利確・トレーリングストップを確認する。"""
+    now_str = _now_jst().strftime("%H:%M")
+    mode = _trading_mode()
+    mode_label = "ペーパー" if mode == "paper" else "ライブ"
+
     if not is_market_open():
-        return
-    if is_paused():
+        if is_trading_day():
+            logger.info(f"[監視 {now_str}] 取引時間外 — 市場: 09:00〜15:25 / モード: {mode_label}")
+        else:
+            logger.info(f"[監視 {now_str}] 非取引日（土日・祝日）/ モード: {mode_label}")
         return
 
-    mode = _trading_mode()
+    if is_paused():
+        logger.info(f"[監視 {now_str}] 一時停止中")
+        return
 
     if mode == "paper":
         try:
             from trading_system.paper_trader import PaperTrader
             from trading_system.data_fetcher import load_universe_data
-            from trading_system.config import VALID_UNIVERSE
 
             pt = PaperTrader()
+            pos_count = len(pt.positions)
             if not pt.positions:
+                logger.info(f"[監視 {now_str}] ペーパー: 保有ポジションなし（損切り監視スキップ）")
                 return
 
+            logger.info(f"[監視 {now_str}] ペーパー: {pos_count}銘柄を監視中...")
             tickers = list(pt.positions.keys())
             data = load_universe_data(tickers=tickers, period="5d")
             results = pt.check_stops(data)
-            for r in results:
-                sign = "✅" if r["pnl"] >= 0 else "🔴"
-                logger.info(
-                    f"[ペーパー自動売却] {sign} {r['ticker']}  "
-                    f"P&L {r.get('pnl_pct', 0):+.1f}%  "
-                    f"理由: {r.get('reason', '')}"
-                )
+            if results:
+                for r in results:
+                    sign = "✅" if r["pnl"] >= 0 else "🔴"
+                    logger.info(
+                        f"[ペーパー自動売却] {sign} {r['ticker']}  "
+                        f"P&L {r.get('pnl_pct', 0):+.1f}%  "
+                        f"理由: {r.get('reason', '')}"
+                    )
+            else:
+                tickers_str = ", ".join(tickers)
+                logger.info(f"[監視 {now_str}] ペーパー: 損切り・利確なし ({tickers_str})")
         except Exception as e:
             logger.exception(f"ペーパーポジション監視エラー: {e}")
     else:
@@ -327,8 +341,10 @@ def monitor_routine():
             executor = OrderExecutor()
 
             if executor.portfolio.count() == 0:
-                return  # 保有なし
+                logger.info(f"[監視 {now_str}] ライブ: 保有ポジションなし（損切り監視スキップ）")
+                return
 
+            logger.info(f"[監視 {now_str}] ライブ: {executor.portfolio.count()}銘柄を監視中...")
             results = executor.check_and_execute_stops()
             for r in results:
                 if r["status"] == "ordered":

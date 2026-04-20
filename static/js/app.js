@@ -1255,7 +1255,10 @@ async function loadAutoTraderData() {
   await Promise.all([
     loadTraderStatus(),
     _currentTradingMode === 'live' ? _loadLiveAutoData() : _loadPaperAutoData(),
+    loadTraderLogs(),
   ]);
+
+  _startLogAutoRefresh();
 }
 
 // ─── ペーパーモード データ読み込み ──────────────
@@ -1980,3 +1983,67 @@ function _applyTradingMode(mode) {
   if (guideLive)  guideLive.style.display  = isPaper ? 'none' : '';
 }
 
+
+// ─── 実行ログビューア ────────────────────────────────────────
+
+let _logRefreshTimer = null;
+let _logCountdown = 30;
+
+async function loadTraderLogs() {
+  const wrap = document.getElementById('at-log-wrap');
+  const fileLabel = document.getElementById('at-log-file');
+  if (!wrap) return;
+
+  try {
+    const res  = await fetch('/api/trader/logs?lines=150');
+    const data = await res.json();
+
+    if (fileLabel) fileLabel.textContent = data.file ? `ファイル: ${data.file}` : '';
+
+    if (!data.lines || data.lines.length === 0) {
+      wrap.innerHTML = '<div class="empty">ログなし（まだ何も実行されていません）</div>';
+      return;
+    }
+
+    const colors = {
+      '[ERROR]':   '#e05c5c',
+      '[WARNING]': '#f5a623',
+      '[INFO]':    'var(--text-muted)',
+    };
+    const html = data.lines.map(line => {
+      let color = 'var(--text-muted)';
+      for (const [key, c] of Object.entries(colors)) {
+        if (line.includes(key)) { color = c; break; }
+      }
+      // 監視・売却・発注ラインは目立たせる
+      if (line.includes('自動売却') || line.includes('買い約定') || line.includes('売り約定')) {
+        color = 'var(--positive)';
+      }
+      if (line.includes('ERROR') || line.includes('エラー')) color = '#e05c5c';
+      const escaped = line.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      return `<div style="color:${color}">${escaped}</div>`;
+    }).join('');
+
+    wrap.innerHTML = html;
+    wrap.scrollTop = wrap.scrollHeight; // 最新行にスクロール
+  } catch (e) {
+    wrap.innerHTML = `<div style="color:#e05c5c">ログ取得エラー: ${e.message}</div>`;
+  }
+
+  // カウントダウンリセット
+  _logCountdown = 30;
+}
+
+function _startLogAutoRefresh() {
+  if (_logRefreshTimer) clearInterval(_logRefreshTimer);
+  _logCountdown = 30;
+  _logRefreshTimer = setInterval(() => {
+    const el = document.getElementById('at-log-countdown');
+    _logCountdown--;
+    if (el) el.textContent = `次の更新: ${_logCountdown}秒後`;
+    if (_logCountdown <= 0) {
+      loadTraderLogs();
+      _logCountdown = 30;
+    }
+  }, 1000);
+}

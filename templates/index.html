@@ -674,6 +674,21 @@
       </div>
     </div>
 
+    <!-- 実行ログビューア -->
+    <div class="card mt-20">
+      <div class="card-header" style="justify-content:space-between">
+        <span>📋 実行ログ</span>
+        <div style="display:flex;align-items:center;gap:10px">
+          <span id="at-log-file" style="font-size:11px;color:var(--text-muted)"></span>
+          <span id="at-log-countdown" style="font-size:11px;color:var(--text-muted)"></span>
+          <button class="btn-secondary" onclick="loadTraderLogs()" style="font-size:12px;padding:4px 12px">更新</button>
+        </div>
+      </div>
+      <div id="at-log-wrap" style="background:var(--bg);border-radius:8px;padding:12px;max-height:320px;overflow-y:auto;font-family:monospace;font-size:12px;line-height:1.7;color:var(--text-muted)">
+        <div class="empty">ログ読み込み中...</div>
+      </div>
+    </div>
+
     <!-- セットアップガイド -->
     <div class="card mt-20">
       <div class="card-header">⚙️ 自動取引 セットアップガイド</div>

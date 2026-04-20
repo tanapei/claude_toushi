@@ -1208,6 +1208,35 @@ def get_real_trades_equity():
 
 
 # ─────────────────────────────────────────────
+# 自動取引 ログ API
+# ─────────────────────────────────────────────
+
+@app.route("/api/trader/logs")
+def get_trader_logs():
+    """自動トレーダーのログファイルの末尾N行を返す。"""
+    lines = int(request.args.get("lines", 150))
+    try:
+        from trading_system.config import LOGS_DIR
+        from datetime import date as _date
+        # 今日のログファイルを優先し、なければ最新のファイルを探す
+        today_log = LOGS_DIR / f"auto_trader_{_date.today():%Y%m%d}.log"
+        if today_log.exists():
+            log_path = today_log
+        else:
+            logs = sorted(LOGS_DIR.glob("auto_trader_*.log"), reverse=True)
+            if not logs:
+                return jsonify({"lines": [], "file": None})
+            log_path = logs[0]
+
+        with open(log_path, encoding="utf-8", errors="replace") as f:
+            all_lines = f.readlines()
+        tail = [l.rstrip() for l in all_lines[-lines:]]
+        return jsonify({"lines": tail, "file": log_path.name})
+    except Exception as e:
+        return jsonify({"lines": [f"ログ読み込みエラー: {e}"], "file": None})
+
+
+# ─────────────────────────────────────────────
 # 自動取引 一時停止 / 再開 API
 # ─────────────────────────────────────────────
 

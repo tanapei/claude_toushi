@@ -233,3 +233,62 @@ class KabuClient:
             raise KabuAPIError(
                 f"API エラー {resp.status_code}: {resp.text}"
             )
+
+
+# ─── 現在値取得（kabu優先・yfinanceフォールバック） ────────────
+
+def fetch_current_prices(tickers: List[str]) -> Dict[str, float]:
+    """
+    保有銘柄の現在値を取得する。
+    kabuステーション®が起動中なら kabu API（リアルタイム）を使用し、
+    起動していない・失敗した場合は yfinance（約15分遅延）にフォールバック。
+
+    Args:
+        tickers: ["7203.T", "6758.T", ...] 形式のリスト
+
+    Returns:
+        {"7203.T": 2850.0, "6758.T": 13500.0, ...}
+    """
+    if not tickers:
+        return {}
+
+    # ── kabu API を試みる ──────────────────────────────────
+    if KABU_API_PASSWORD:
+        try:
+            client = KabuClient()
+            prices: Dict[str, float] = {}
+            for ticker in tickers:
+                code = ticker.replace(".T", "").replace(".S", "")
+                board = client.get_board(code)
+                price = board.get("CurrentPrice") or board.get("CalcPrice")
+                if price:
+                    prices[ticker] = float(price)
+            if prices:
+                logger.debug(f"kabu APIで現在値取得: {list(prices.keys())}")
+                return prices
+        except Exception as e:
+            logger.info(f"kabu API 現在値取得失敗、yfinanceにフォールバック: {e}")
+
+    # ── yfinance フォールバック ────────────────────────────
+    try:
+        import yfinance as yf
+        import pandas as pd
+        prices = {}
+        data = yf.download(tickers, period="2d", progress=False, auto_adjust=True)
+        if isinstance(data.columns, pd.MultiIndex):
+            close = data["Close"]
+            for t in tickers:
+                if t in close.columns:
+                    last = close[t].dropna()
+                    if not last.empty:
+                        prices[t] = float(last.iloc[-1])
+        else:
+            # 銘柄が1つのとき
+            close = data["Close"].dropna()
+            if not close.empty and tickers:
+                prices[tickers[0]] = float(close.iloc[-1])
+        logger.debug(f"yfinanceで現在値取得: {list(prices.keys())}")
+        return prices
+    except Exception as e:
+        logger.warning(f"yfinance 現在値取得失敗: {e}")
+        return {}

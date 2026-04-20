@@ -310,7 +310,9 @@ def monitor_routine():
     if mode == "paper":
         try:
             from trading_system.paper_trader import PaperTrader
+            from trading_system.kabu_client import fetch_current_prices
             from trading_system.data_fetcher import load_universe_data
+            import pandas as pd
 
             pt = PaperTrader()
             pos_count = len(pt.positions)
@@ -318,9 +320,18 @@ def monitor_routine():
                 logger.info(f"[監視 {now_str}] ペーパー: 保有ポジションなし（損切り監視スキップ）")
                 return
 
-            logger.info(f"[監視 {now_str}] ペーパー: {pos_count}銘柄を監視中...")
             tickers = list(pt.positions.keys())
-            data = load_universe_data(tickers=tickers, period="5d")
+
+            # kabu API（リアルタイム）優先、失敗時はyfinanceにフォールバック
+            spot = fetch_current_prices(tickers)
+            if spot:
+                src = "kabu API（リアルタイム）"
+                data = {t: pd.DataFrame({"close": [p]}) for t, p in spot.items()}
+            else:
+                src = "yfinance（約15分遅延）"
+                data = load_universe_data(tickers=tickers, period="5d")
+
+            logger.info(f"[監視 {now_str}] ペーパー: {pos_count}銘柄を監視中... [{src}]")
             results = pt.check_stops(data)
             if results:
                 for r in results:

@@ -589,15 +589,29 @@ def _get_paper_trader():
 
 @app.route("/api/paper-trader/status")
 def paper_trader_status():
-    """ペーパーポートフォリオの現在状態を返す（保有銘柄の現在値を取得して損益を計算）。"""
+    """ペーパーポートフォリオの現在状態を返す。
+    kabuステーション®起動中ならリアルタイム価格、未起動ならyfinance遅延価格で損益計算。
+    """
     try:
         pt = _get_paper_trader()
         price_data = None
         if pt.positions:
             try:
+                from trading_system.kabu_client import fetch_current_prices
                 from trading_system.data_fetcher import load_universe_data
+                import pandas as pd
+
                 tickers = list(pt.positions.keys())
-                price_data = load_universe_data(tickers=tickers, period="5d")
+                spot = fetch_current_prices(tickers)
+
+                # get_status() が期待する {ticker: DataFrame} 形式に変換
+                if spot:
+                    price_data = {
+                        t: pd.DataFrame({"close": [p]})
+                        for t, p in spot.items()
+                    }
+                else:
+                    price_data = load_universe_data(tickers=tickers, period="5d")
             except Exception as e:
                 logger.warning(f"現在値取得失敗（損益は0表示）: {e}")
         return jsonify(pt.get_status(price_data))

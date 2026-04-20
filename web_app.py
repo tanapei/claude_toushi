@@ -600,9 +600,7 @@ def _fetch_spot_prices(tickers: list) -> dict:
     if kabu_pass:
         try:
             from trading_system.kabu_client import KabuClient, KabuAPIError
-            import trading_system.config as _cfg
-            _cfg.KABU_API_PASSWORD = kabu_pass  # 実行時に上書き
-            client = KabuClient()
+            client = KabuClient(api_password=kabu_pass)
             prices = {}
             for ticker in tickers:
                 code = ticker.replace(".T", "").replace(".S", "")

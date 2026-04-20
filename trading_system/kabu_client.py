@@ -26,7 +26,8 @@ class KabuAPIError(Exception):
 class KabuClient:
     """kabuステーション® REST API ラッパー。"""
 
-    def __init__(self):
+    def __init__(self, api_password: str = ""):
+        self._api_password = api_password or KABU_API_PASSWORD
         self._cached_token: Optional[str] = None
         self._token_fetched_at: float = 0
 
@@ -36,7 +37,7 @@ class KabuClient:
         """APIトークンを取得する（有効期限: 当日中）。"""
         resp = requests.post(
             f"{KABU_API_BASE_URL}/token",
-            json={"APIPassword": KABU_API_PASSWORD},
+            json={"APIPassword": self._api_password},
             timeout=REQUEST_TIMEOUT,
         )
         if resp.status_code != 200:

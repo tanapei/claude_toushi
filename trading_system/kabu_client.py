@@ -272,21 +272,24 @@ def fetch_current_prices(tickers: List[str]) -> Dict[str, float]:
     # ── yfinance フォールバック ────────────────────────────
     try:
         import yfinance as yf
-        import pandas as pd
+        from datetime import date, timedelta
         prices = {}
-        data = yf.download(tickers, period="2d", progress=False, auto_adjust=True)
-        if isinstance(data.columns, pd.MultiIndex):
-            close = data["Close"]
-            for t in tickers:
-                if t in close.columns:
-                    last = close[t].dropna()
-                    if not last.empty:
-                        prices[t] = float(last.iloc[-1])
-        else:
-            # 銘柄が1つのとき
-            close = data["Close"].dropna()
-            if not close.empty and tickers:
-                prices[tickers[0]] = float(close.iloc[-1])
+        start = (date.today() - timedelta(days=5)).strftime("%Y-%m-%d")
+        end   = (date.today() + timedelta(days=1)).strftime("%Y-%m-%d")
+        for ticker in tickers:
+            try:
+                raw = yf.download(
+                    ticker, start=start, end=end,
+                    progress=False, auto_adjust=True,
+                )
+                if raw.empty:
+                    continue
+                raw.columns = [c[0] if isinstance(c, tuple) else c for c in raw.columns]
+                close = raw["Close"].dropna()
+                if not close.empty:
+                    prices[ticker] = float(close.iloc[-1])
+            except Exception:
+                continue
         logger.debug(f"yfinanceで現在値取得: {list(prices.keys())}")
         return prices
     except Exception as e:

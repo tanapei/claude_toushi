@@ -311,7 +311,6 @@ def monitor_routine():
         try:
             from trading_system.paper_trader import PaperTrader
             from trading_system.kabu_client import fetch_current_prices
-            from trading_system.data_fetcher import load_universe_data
             import pandas as pd
 
             pt = PaperTrader()
@@ -324,14 +323,12 @@ def monitor_routine():
 
             # kabu API（リアルタイム）優先、失敗時はyfinanceにフォールバック
             spot = fetch_current_prices(tickers)
-            if spot:
-                src = "kabu API（リアルタイム）"
-                data = {t: pd.DataFrame({"close": [p]}) for t, p in spot.items()}
-            else:
-                src = "yfinance（約15分遅延）"
-                data = load_universe_data(tickers=tickers, period="5d")
+            if not spot:
+                logger.warning(f"[監視 {now_str}] 現在値取得失敗（kabu API・yfinanceともに応答なし）")
+                return
 
-            logger.info(f"[監視 {now_str}] ペーパー: {pos_count}銘柄を監視中... [{src}]")
+            data = {t: pd.DataFrame({"close": [p]}) for t, p in spot.items()}
+            logger.info(f"[監視 {now_str}] ペーパー: {pos_count}銘柄を監視中...")
             results = pt.check_stops(data)
             if results:
                 for r in results:

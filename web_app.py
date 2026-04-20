@@ -598,20 +598,15 @@ def paper_trader_status():
         if pt.positions:
             try:
                 from trading_system.kabu_client import fetch_current_prices
-                from trading_system.data_fetcher import load_universe_data
                 import pandas as pd
 
                 tickers = list(pt.positions.keys())
                 spot = fetch_current_prices(tickers)
-
-                # get_status() が期待する {ticker: DataFrame} 形式に変換
-                if spot:
-                    price_data = {
-                        t: pd.DataFrame({"close": [p]})
-                        for t, p in spot.items()
-                    }
-                else:
-                    price_data = load_universe_data(tickers=tickers, period="5d")
+                # get_status() が期待する {ticker: DataFrame{"close"}} 形式に変換
+                price_data = {
+                    t: pd.DataFrame({"close": [p]})
+                    for t, p in spot.items()
+                } if spot else None
             except Exception as e:
                 logger.warning(f"現在値取得失敗（損益は0表示）: {e}")
         return jsonify(pt.get_status(price_data))

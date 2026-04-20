@@ -660,6 +660,37 @@ def paper_trader_status():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/paper-trader/debug")
+def paper_trader_debug():
+    """ペーパートレードの診断情報を返す（トラブルシュート用）。"""
+    import pandas as pd
+    result = {}
+    try:
+        pt = _get_paper_trader()
+        result["portfolio_file_exists"] = (
+            (Path(__file__).parent / "data" / "paper_portfolio.json").exists()
+        )
+        result["position_count"] = len(pt.positions)
+        result["positions"] = list(pt.positions.keys())
+        result["cash"] = round(pt.cash)
+        result["trade_count"] = len(pt.trade_history)
+    except Exception as e:
+        result["portfolio_error"] = str(e)
+
+    if result.get("positions"):
+        tickers = result["positions"]
+        try:
+            spot = _fetch_spot_prices(tickers)
+            result["price_fetch_result"] = spot
+            result["price_fetch_ok"] = bool(spot)
+        except Exception as e:
+            result["price_fetch_error"] = str(e)
+    else:
+        result["price_fetch_result"] = "ポジションなし（取得不要）"
+
+    return jsonify(result)
+
+
 @app.route("/api/paper-trader/run", methods=["POST"])
 def paper_trader_run():
     """シグナルを取得してペーパートレードを1サイクル実行する。"""

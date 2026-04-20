@@ -1264,14 +1264,23 @@ async function loadAutoTraderData() {
 // ─── ペーパーモード データ読み込み ──────────────
 
 async function _loadPaperAutoData() {
+  const msgEl = document.getElementById('pt-msg');
+  if (msgEl) msgEl.textContent = '更新中...';
   try {
     const res = await fetch('/api/paper-trader/status');
     const d   = await res.json();
-    if (d.error) return;
+    if (d.error) {
+      if (msgEl) msgEl.textContent = 'エラー: ' + d.error;
+      return;
+    }
     _renderPaperKPIs(d);
     _renderPaperPositions(d);
     _renderPaperHistory(d);
+    const posCount = (d.positions || []).length;
+    const now = new Date().toLocaleTimeString('ja-JP');
+    if (msgEl) msgEl.textContent = `最終更新: ${now}　保有${posCount}銘柄　総資産 ¥${(d.total_equity||0).toLocaleString('ja-JP')}`;
   } catch (e) {
+    if (msgEl) msgEl.textContent = 'データ取得失敗: ' + e.message;
     console.warn('ペーパーデータ取得失敗:', e);
   }
   await _loadPaperEquityChart();

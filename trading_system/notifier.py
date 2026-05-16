@@ -20,8 +20,9 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-LINE_API_URL = "https://api.line.me/v2/bot/message/push"
-_TIMEOUT     = 10  # 秒
+LINE_PUSH_URL      = "https://api.line.me/v2/bot/message/push"
+LINE_BROADCAST_URL = "https://api.line.me/v2/bot/message/broadcast"
+_TIMEOUT           = 10  # 秒
 
 _SETTINGS_FILE = Path(__file__).parent.parent / "settings.json"
 
@@ -57,19 +58,14 @@ def _is_configured() -> bool:
 
 
 def send(message: str) -> bool:
-    """
-    LINE にテキストメッセージを送信する。
-
-    Returns:
-        True: 送信成功 / False: スキップまたは失敗
-    """
+    """特定ユーザー（自分）にプッシュ通知する。売買・エラー等の個人通知に使用。"""
     token, user_id = _load_line_credentials()
     if not (token and user_id):
         return False
 
     try:
         resp = requests.post(
-            LINE_API_URL,
+            LINE_PUSH_URL,
             headers={
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
@@ -81,13 +77,40 @@ def send(message: str) -> bool:
             timeout=_TIMEOUT,
         )
         if resp.status_code == 200:
-            logger.debug(f"LINE 通知送信: {message[:40]}...")
+            logger.debug(f"LINE push送信: {message[:40]}...")
             return True
         else:
-            logger.warning(f"LINE 通知失敗 ({resp.status_code}): {resp.text}")
+            logger.warning(f"LINE push失敗 ({resp.status_code}): {resp.text}")
             return False
     except Exception as e:
-        logger.warning(f"LINE 通知エラー: {e}")
+        logger.warning(f"LINE push エラー: {e}")
+        return False
+
+
+def broadcast(message: str) -> bool:
+    """友達登録済みの全ユーザーに一斉配信する。朝の市場通知に使用。"""
+    token = _token()
+    if not token:
+        return False
+
+    try:
+        resp = requests.post(
+            LINE_BROADCAST_URL,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            json={"messages": [{"type": "text", "text": message}]},
+            timeout=_TIMEOUT,
+        )
+        if resp.status_code == 200:
+            logger.debug(f"LINE broadcast送信: {message[:40]}...")
+            return True
+        else:
+            logger.warning(f"LINE broadcast失敗 ({resp.status_code}): {resp.text}")
+            return False
+    except Exception as e:
+        logger.warning(f"LINE broadcast エラー: {e}")
         return False
 
 
@@ -167,7 +190,7 @@ def notify_news_summary(analysis_text: str, news_count: int, mode: str = "paper"
     footer = f"\n━━━━━━━━━━━━━━\nモード: {mode_str}トレード"
 
     message = header + analysis_text + footer
-    send(message[:4900])  # LINE上限5000文字に余裕を持たせる
+    broadcast(message[:4900])  # 友達全員に一斉配信
 
 
 def notify_morning_signal(
@@ -218,4 +241,4 @@ def notify_morning_signal(
         f"モード: {mode_str}トレード",
     ]
 
-    send("\n".join(lines))
+    broadcast("\n".join(lines))  # 友達全員に一斉配信

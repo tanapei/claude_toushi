@@ -134,13 +134,13 @@ def pre_market_news():
 
 
 def pre_market_notify():
-    """08:50: 本日の注目銘柄をLINEに事前通知する。"""
+    """08:30: 本日の注目銘柄をLINEに事前通知する。"""
     if not is_trading_day():
         return
     if is_paused():
         return
 
-    logger.info("08:50 注目銘柄 LINE 通知 開始")
+    logger.info("08:30 注目銘柄 LINE 通知 開始")
     try:
         from trading_system.signal_runner import SignalRunner
         from trading_system.notifier import notify_morning_signal
@@ -399,15 +399,14 @@ def _setup_schedule():
 
     for day in weekdays:
         getattr(schedule.every(), day).at("08:30").do(pre_market_news)
-        getattr(schedule.every(), day).at("08:50").do(pre_market_notify)
+        getattr(schedule.every(), day).at("08:30").do(pre_market_notify)
         getattr(schedule.every(), day).at("09:00").do(morning_routine)
         getattr(schedule.every(), day).at("15:30").do(closing_routine)
 
     schedule.every(5).minutes.do(monitor_routine)
 
     logger.info("スケジュール設定完了")
-    logger.info("  平日 08:30 JST  → 朝のニュース分析 LINE 通知")
-    logger.info("  平日 08:50 JST  → 注目銘柄スコア LINE 通知")
+    logger.info("  平日 08:30 JST  → 朝のニュース分析 + 注目銘柄 LINE 通知")
     logger.info("  平日 09:00 JST  → 朝の発注処理（祝日チェック済み）")
     logger.info("  平日 5分ごと     → ポジション監視（取引時間中のみ）")
     logger.info("  平日 15:30 JST  → 引け後の改善分析")
